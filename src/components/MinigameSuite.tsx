@@ -2,7 +2,6 @@ import { useEffect, useId, useRef, useState } from 'react';
 import {
   ASSEMBLY_MAX_SLIPS,
   ASSEMBLY_STEPS,
-  ASSEMBLY_TILES_DISPLAY_ORDER,
   RECIPE_DURATION_SECONDS,
   RECIPE_MAX_MISTAKES,
   RECIPE_TARGET_IDS,
@@ -10,13 +9,14 @@ import {
   RHYTHM_PASS_THRESHOLD,
   RHYTHM_TOTAL_BEATS,
   areAllMinigamesPassed,
-  checkAssemblyTap,
   computeKrathongQuality,
   evaluateAssemblyResult,
   evaluateRecipeResult,
   evaluateRhythmResult,
   isMinigameUnlocked,
   judgeRhythmTap,
+  judgeStackDrop,
+  judgeStreamScoop,
 } from '../domain/minigames';
 import type { MinigameId, MinigamesProgress } from '../domain/types';
 import { playChime } from '../game/sound';
@@ -29,6 +29,14 @@ interface MinigameSuiteProps {
   onResetMinigame: (gameId: MinigameId) => void;
 }
 
+const STREAM_ZONES = [
+  { label: 'ซ้ายสุด', norm: 0.14 },
+  { label: 'ใกล้กลาง', norm: 0.32 },
+  { label: 'วงกระชอนทอง', norm: 0.5 },
+  { label: 'ใกล้กลางขวา', norm: 0.68 },
+  { label: 'ขวาสุด', norm: 0.86 },
+];
+
 export function MinigameSuite({
   progress,
   reducedMotion,
@@ -36,7 +44,10 @@ export function MinigameSuite({
   onCompleteMinigame,
   onResetMinigame,
 }: MinigameSuiteProps) {
+  const streamCueId = useId();
+  const stackCueId = useId();
   const rhythmZoneHintId = useId();
+
   const initialActive: MinigameId =
     progress.recipe.status !== 'passed'
       ? 'recipe'
@@ -45,36 +56,73 @@ export function MinigameSuite({
         : 'rhythm';
   const [activeGame, setActiveGame] = useState<MinigameId>(initialActive);
 
-  // --- Game 1: Recipe state ---
+  // =========================================================================
+  // GAME 1: สายน้ำช้อนยอดวัสดุทอง (Canal Stream Catcher — Timing & Reflex!)
+  // =========================================================================
   const [recipeRunning, setRecipeRunning] = useState(false);
   const [recipeSelected, setRecipeSelected] = useState<string[]>([]);
+  const [recipeDismissed, setRecipeDismissed] = useState<string[]>([]);
   const [recipeMistakes, setRecipeMistakes] = useState(0);
   const [recipeSeconds, setRecipeSeconds] = useState(RECIPE_DURATION_SECONDS);
+  const [recipeBonus, setRecipeBonus] = useState(0);
+  const [streamItemIdx, setStreamItemIdx] = useState(0);
+  const [streamPos, setStreamPos] = useState(0.5);
   const [recipeFeedback, setRecipeFeedback] = useState(
-    'กดเริ่มเพื่อคัดเลือกวัตถุดิบ 4 อย่างตามสูตร'
+    'กดเริ่ม แล้วกด "ช้อนรับเข้าถาดทอง!" เมื่อของมงคลลอยเข้าวงแสงสีทองตรงกลาง (ปัดขยะ/ใบไม้แห้งทิ้ง!)'
   );
 
-  // --- Game 2: Assembly sequence state ---
-  const [placedCount, setPlacedCount] = useState(0);
-  const [assemblySlips, setAssemblySlips] = useState(0);
-  const [assemblyFeedback, setAssemblyFeedback] = useState(
-    'แตะหรือลากชิ้นส่วนเรียงลำดับจาก 1 ถึง 4'
-  );
+  const streamPosRef = useRef(0.5);
+  const streamDirRef = useRef(1);
+  const scoopBtnRef = useRef<HTMLButtonElement>(null);
 
-  // --- Game 3: Rhythm beat state ---
-  const [rhythmRunning, setRhythmRunning] = useState(false);
-  const [beatPos, setBeatPos] = useState(0.5);
-  const [beatIndex, setBeatIndex] = useState(0);
-  const [rhythmPoints, setRhythmPoints] = useState(0);
-  const [rhythmFeedback, setRhythmFeedback] = useState(
-    'กดเริ่ม แล้วแตะปุ่ม "แตะให้ตรงแสง" (หรือ Spacebar / Enter) เมื่อจังหวะเข้าเป้ากลาง 5 ครั้ง'
+  const remainingStreamItems = RECIPE_TRAY_ITEMS.filter(
+    (item) =>
+      !recipeSelected.includes(item.id) && !recipeDismissed.includes(item.id)
   );
-  const [rhythmLiveCue, setRhythmLiveCue] = useState('');
-  const rhythmDirRef = useRef(1);
-  const beatPosRef = useRef(0.5);
-  const prevInSweetspotRef = useRef(false);
-  const lastLiveCueAtRef = useRef(0);
-  const rhythmTapBtnRef = useRef<HTMLButtonElement>(null);
+  const currentStreamItem =
+    remainingStreamItems.length > 0
+      ? remainingStreamItems[streamItemIdx % remainingStreamItems.length]
+      : RECIPE_TRAY_ITEMS[0];
+
+  useEffect(() => {
+    if (!recipeRunning) return undefined;
+    scoopBtnRef.current?.focus();
+
+    if (reducedMotion) {
+      const steps = [0.5, 0.68, 0.84, 0.5, 0.32, 0.18];
+      let idx = 0;
+      streamPosRef.current = steps[0];
+      setStreamPos(steps[0]);
+      const timer = window.setInterval(() => {
+        idx = (idx + 1) % steps.length;
+        streamPosRef.current = steps[idx];
+        setStreamPos(steps[idx]);
+      }, 520);
+      return () => window.clearInterval(timer);
+    }
+
+    let rafId = 0;
+    let lastTs = performance.now();
+    const tick = (now: number) => {
+      const dt = Math.min(40, now - lastTs) / 1000;
+      lastTs = now;
+      let next = streamPosRef.current + streamDirRef.current * dt * 1.08;
+      if (next >= 0.94) {
+        next = 0.94;
+        streamDirRef.current = -1;
+        setStreamItemIdx((c) => c + 1);
+      } else if (next <= 0.06) {
+        next = 0.06;
+        streamDirRef.current = 1;
+        setStreamItemIdx((c) => c + 1);
+      }
+      streamPosRef.current = next;
+      setStreamPos(next);
+      rafId = window.requestAnimationFrame(tick);
+    };
+    rafId = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(rafId);
+  }, [recipeRunning, reducedMotion]);
 
   useEffect(() => {
     if (!recipeRunning) return undefined;
@@ -87,8 +135,9 @@ export function MinigameSuite({
             selectedIds: recipeSelected,
             mistakes: recipeMistakes,
             remainingSeconds: 0,
+            timingBonus: recipeBonus,
           });
-          setRecipeFeedback('หมดเวลาแล้ว! กด "ลองใหม่" เพื่อคัดวัสดุอีกครั้ง');
+          setRecipeFeedback('หมดเวลาแล้ว! กด "เล่นด่าน 1 ซ้ำ" เพื่อช้อนวัสดุอีกครั้ง');
           onCompleteMinigame('recipe', res.passed, res.score);
           return 0;
         }
@@ -96,7 +145,263 @@ export function MinigameSuite({
       });
     }, 1000);
     return () => window.clearInterval(id);
-  }, [recipeRunning, recipeSelected, recipeMistakes, onCompleteMinigame]);
+  }, [recipeRunning, recipeSelected, recipeMistakes, recipeBonus, onCompleteMinigame]);
+
+  const startRecipe = () => {
+    onResetMinigame('recipe');
+    setRecipeSelected([]);
+    setRecipeDismissed([]);
+    setRecipeMistakes(0);
+    setRecipeBonus(0);
+    setStreamItemIdx(0);
+    streamPosRef.current = reducedMotion ? 0.5 : 0.24;
+    streamDirRef.current = 1;
+    setStreamPos(reducedMotion ? 0.5 : 0.24);
+    setRecipeSeconds(RECIPE_DURATION_SECONDS);
+    setRecipeFeedback('เล็งวงทองตรงกลาง! ของมงคลกด "ช้อนรับ" — ของเสียกด "ปัดทิ้ง"');
+    setRecipeRunning(true);
+  };
+
+  const handleStreamScoop = (explicitItemId?: string) => {
+    if (!recipeRunning) return;
+    const item = explicitItemId
+      ? RECIPE_TRAY_ITEMS.find((i) => i.id === explicitItemId)
+      : currentStreamItem;
+    if (!item || recipeSelected.includes(item.id)) return;
+
+    // Direct tray tap uses current stream position if same item, or sweetspot if reducedMotion/keyboard quick-pick
+    const posToJudge =
+      explicitItemId && explicitItemId !== currentStreamItem.id
+        ? item.isTarget
+          ? streamPosRef.current
+          : 0.5
+        : streamPosRef.current;
+
+    const judged = judgeStreamScoop(posToJudge, item);
+    if (judged.caught) {
+      playChime('pickup', soundEnabled);
+      const nextSelected = [...recipeSelected, item.id];
+      const addBonus = judged.judgment === 'perfect' ? 4 : 2;
+      const nextBonus = recipeBonus + addBonus;
+      setRecipeSelected(nextSelected);
+      setRecipeBonus(nextBonus);
+      setStreamItemIdx((c) => c + 1);
+
+      if (nextSelected.length === RECIPE_TARGET_IDS.length) {
+        setRecipeRunning(false);
+        const res = evaluateRecipeResult({
+          selectedIds: nextSelected,
+          mistakes: recipeMistakes,
+          remainingSeconds: recipeSeconds,
+          timingBonus: nextBonus,
+        });
+        setRecipeFeedback(
+          `เยี่ยมมาก! ช้อนยอดวัสดุครบทั้ง 4 ชิ้น ได้ ${res.score} คะแนน`
+        );
+        onCompleteMinigame('recipe', res.passed, res.score);
+      } else {
+        const tag = judged.judgment === 'perfect' ? 'ตรงกลางเป๊ะ!' : 'ช้อนสำเร็จ!';
+        setRecipeFeedback(
+          `${tag} ได้รับ "${item.label}" (${nextSelected.length}/${RECIPE_TARGET_IDS.length})`
+        );
+      }
+    } else {
+      playChime('error', soundEnabled);
+      const nextMistakes = recipeMistakes + 1;
+      setRecipeMistakes(nextMistakes);
+      if (!item.isTarget) {
+        setStreamItemIdx((c) => c + 1);
+      }
+      if (nextMistakes >= RECIPE_MAX_MISTAKES) {
+        setRecipeRunning(false);
+        const res = evaluateRecipeResult({
+          selectedIds: recipeSelected,
+          mistakes: nextMistakes,
+          remainingSeconds: recipeSeconds,
+          timingBonus: recipeBonus,
+        });
+        setRecipeFeedback(
+          `เลือกวัสดุผิดครบ ${RECIPE_MAX_MISTAKES} ครั้ง กด "เล่นด่าน 1 ซ้ำ" ได้เลย`
+        );
+        onCompleteMinigame('recipe', res.passed, res.score);
+      } else if (!item.isTarget) {
+        setRecipeFeedback(
+          `อุ๊ย! "${item.label}" เป็นสิ่งเจือปน ต้องกดปัดออก (พลาด ${nextMistakes}/${RECIPE_MAX_MISTAKES})`
+        );
+      } else {
+        setRecipeFeedback(
+          `ช้อนเร็ว/ช้าไปนิด! รอให้ "${item.label}" ลอยเข้าวงสีทองตรงกลางก่อนนะ (พลาด ${nextMistakes}/${RECIPE_MAX_MISTAKES})`
+        );
+      }
+    }
+  };
+
+  const handleSwatDecoy = () => {
+    if (!recipeRunning || !currentStreamItem) return;
+    if (!currentStreamItem.isTarget) {
+      playChime('beat', soundEnabled);
+      setRecipeDismissed((prev) => [...prev, currentStreamItem.id]);
+      setRecipeBonus((b) => b + 3);
+      setStreamItemIdx((c) => c + 1);
+      setRecipeFeedback(
+        `ปัด "${currentStreamItem.label}" พ้นสายน้ำแล้ว! (+โบนัสรักษ์คลอง)`
+      );
+    } else {
+      // Gently skip to next floating item without penalty so player can cycle
+      setStreamItemIdx((c) => c + 1);
+      setRecipeFeedback(`ปล่อย "${currentStreamItem.label}" ไหลวนกลับมาใหม่อีกรอบ`);
+    }
+  };
+
+  // =========================================================================
+  // GAME 2: วางชั้นกระทงตรงแกนทอง (Precision Pendulum Stacker — Like Game 3!)
+  // =========================================================================
+  const [stackRunning, setStackRunning] = useState(false);
+  const [placedCount, setPlacedCount] = useState(0);
+  const [placedOffsets, setPlacedOffsets] = useState<number[]>([]);
+  const [assemblySlips, setAssemblySlips] = useState(0);
+  const [assemblyPoints, setAssemblyPoints] = useState(0);
+  const [stackPos, setStackPos] = useState(0.5);
+  const [assemblyFeedback, setAssemblyFeedback] = useState(
+    'กดเริ่มทำชั้นกระทง แล้วจังหวะที่ชิ้นส่วนเลื่อนมาตรงเส้นแกนทองตรงกลางให้กด "วางชั้นกระทง!"'
+  );
+
+  const stackPosRef = useRef(0.5);
+  const stackDirRef = useRef(1);
+  const stackDropBtnRef = useRef<HTMLButtonElement>(null);
+
+  const currentStep =
+    ASSEMBLY_STEPS[Math.min(placedCount, ASSEMBLY_STEPS.length - 1)];
+
+  useEffect(() => {
+    if (!stackRunning) return undefined;
+    stackDropBtnRef.current?.focus();
+
+    if (reducedMotion) {
+      const steps = [0.5, 0.66, 0.8, 0.5, 0.34, 0.2];
+      let idx = 0;
+      stackPosRef.current = steps[0];
+      setStackPos(steps[0]);
+      const timer = window.setInterval(() => {
+        idx = (idx + 1) % steps.length;
+        stackPosRef.current = steps[idx];
+        setStackPos(steps[idx]);
+      }, 500);
+      return () => window.clearInterval(timer);
+    }
+
+    let rafId = 0;
+    let lastTs = performance.now();
+    const speedMult = currentStep?.speedMultiplier ?? 1;
+    const tick = (now: number) => {
+      const dt = Math.min(40, now - lastTs) / 1000;
+      lastTs = now;
+      let next =
+        stackPosRef.current + stackDirRef.current * dt * 1.12 * speedMult;
+      if (next >= 0.93) {
+        next = 0.93;
+        stackDirRef.current = -1;
+      } else if (next <= 0.07) {
+        next = 0.07;
+        stackDirRef.current = 1;
+      }
+      stackPosRef.current = next;
+      setStackPos(next);
+      rafId = window.requestAnimationFrame(tick);
+    };
+    rafId = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(rafId);
+  }, [stackRunning, reducedMotion, placedCount, currentStep?.speedMultiplier]);
+
+  const startAssembly = () => {
+    onResetMinigame('assembly');
+    setPlacedCount(0);
+    setPlacedOffsets([]);
+    setAssemblySlips(0);
+    setAssemblyPoints(0);
+    stackPosRef.current = reducedMotion ? 0.5 : 0.22;
+    stackDirRef.current = 1;
+    setStackPos(reducedMotion ? 0.5 : 0.22);
+    setAssemblyFeedback(
+      'เล็งให้ตรงแกนทองตรงกลาง แล้วกดวางทีละชั้น (ครบ 4 ชั้น)!'
+    );
+    setStackRunning(true);
+  };
+
+  const handleStackDrop = () => {
+    if (
+      progress.assembly.status === 'passed' ||
+      progress.assembly.status === 'failed'
+    ) {
+      return;
+    }
+    const pos = stackRunning ? stackPosRef.current : 0.5;
+    const resDrop = judgeStackDrop(pos);
+
+    if (resDrop.aligned) {
+      playChime('pickup', soundEnabled);
+      const nextCount = placedCount + 1;
+      const nextPts = assemblyPoints + resDrop.points;
+      setPlacedCount(nextCount);
+      setPlacedOffsets((prev) => [...prev, pos]);
+      setAssemblyPoints(nextPts);
+
+      if (nextCount >= ASSEMBLY_STEPS.length) {
+        setStackRunning(false);
+        const evalRes = evaluateAssemblyResult({
+          placedCount: nextCount,
+          slips: assemblySlips,
+          alignmentPoints: nextPts,
+        });
+        setAssemblyFeedback(
+          `ประกอบกระทงครบ 4 ชั้นสมดุลสวยงาม! ได้ ${evalRes.score} คะแนน`
+        );
+        onCompleteMinigame('assembly', evalRes.passed, evalRes.score);
+      } else {
+        const nextLayer = ASSEMBLY_STEPS[nextCount];
+        const word =
+          resDrop.judgment === 'perfect' ? 'ตรงแกนทองเป๊ะ!' : 'วางเข้าแกนดีมาก!';
+        setAssemblyFeedback(`${word} เตรียมวาง "${nextLayer.label}" ต่อเลย`);
+      }
+    } else {
+      playChime('error', soundEnabled);
+      const nextSlips = assemblySlips + 1;
+      setAssemblySlips(nextSlips);
+      if (nextSlips >= ASSEMBLY_MAX_SLIPS) {
+        setStackRunning(false);
+        const evalRes = evaluateAssemblyResult({
+          placedCount,
+          slips: nextSlips,
+          alignmentPoints: assemblyPoints,
+        });
+        setAssemblyFeedback(
+          'วางเบี้ยวหลุดแกนครบ 3 ครั้ง กด "ประกอบใหม่" เพื่อตั้งสมาธิอีกรอบนะ'
+        );
+        onCompleteMinigame('assembly', evalRes.passed, evalRes.score);
+      } else {
+        setAssemblyFeedback(
+          `เบี้ยวออกนอกแกนทอง! รอจังหวะเข้ากลางแล้ววาง "${currentStep.label}" ใหม่ (พลาด ${nextSlips}/${ASSEMBLY_MAX_SLIPS})`
+        );
+      }
+    }
+  };
+
+  // =========================================================================
+  // GAME 3: ประดับแสงเทียนตามจังหวะ (Beloved Candlelight Rhythm!)
+  // =========================================================================
+  const [rhythmRunning, setRhythmRunning] = useState(false);
+  const [beatPos, setBeatPos] = useState(0.5);
+  const [beatIndex, setBeatIndex] = useState(0);
+  const [rhythmPoints, setRhythmPoints] = useState(0);
+  const [rhythmFeedback, setRhythmFeedback] = useState(
+    'กดเริ่ม แล้วแตะปุ่ม "แตะให้ตรงแสง" (หรือ Spacebar / Enter) เมื่อเปลวเทียนเข้าเป้ากลาง 5 ครั้ง'
+  );
+  const [rhythmLiveCue, setRhythmLiveCue] = useState('');
+  const rhythmDirRef = useRef(1);
+  const beatPosRef = useRef(0.5);
+  const prevInSweetspotRef = useRef(false);
+  const lastLiveCueAtRef = useRef(0);
+  const rhythmTapBtnRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!rhythmRunning) return undefined;
@@ -145,109 +450,11 @@ export function MinigameSuite({
       const now = Date.now();
       if (now - lastLiveCueAtRef.current >= 750) {
         lastLiveCueAtRef.current = now;
-        setRhythmLiveCue(
-          `จังหวะที่ ${beatIndex + 1} เข้าเป้ากลางแล้ว กดตอนนี้`
-        );
+        setRhythmLiveCue(`จังหวะที่ ${beatIndex + 1} เข้าเป้ากลางแล้ว กดตอนนี้`);
       }
     }
     prevInSweetspotRef.current = inCenter;
   }, [beatPos, rhythmRunning, beatIndex, soundEnabled]);
-
-  const startRecipe = () => {
-    onResetMinigame('recipe');
-    setRecipeSelected([]);
-    setRecipeMistakes(0);
-    setRecipeSeconds(RECIPE_DURATION_SECONDS);
-    setRecipeFeedback('เลือกวัตถุดิบที่ถูกต้องทั้ง 4 ชิ้นให้ทันเวลา!');
-    setRecipeRunning(true);
-  };
-
-  const handleRecipePick = (itemId: string) => {
-    if (!recipeRunning) return;
-    const item = RECIPE_TRAY_ITEMS.find((i) => i.id === itemId);
-    if (!item || recipeSelected.includes(itemId)) return;
-
-    if (item.isTarget) {
-      const nextSelected = [...recipeSelected, itemId];
-      setRecipeSelected(nextSelected);
-      if (nextSelected.length === RECIPE_TARGET_IDS.length) {
-        setRecipeRunning(false);
-        const res = evaluateRecipeResult({
-          selectedIds: nextSelected,
-          mistakes: recipeMistakes,
-          remainingSeconds: recipeSeconds,
-        });
-        setRecipeFeedback(`เยี่ยมมาก! คัดวัสดุครบสูตรได้ ${res.score} คะแนน`);
-        onCompleteMinigame('recipe', res.passed, res.score);
-      } else {
-        setRecipeFeedback(
-          `เก็บ "${item.label}" แล้ว (${nextSelected.length}/${RECIPE_TARGET_IDS.length})`
-        );
-      }
-    } else {
-      const nextMistakes = recipeMistakes + 1;
-      setRecipeMistakes(nextMistakes);
-      if (nextMistakes >= RECIPE_MAX_MISTAKES) {
-        setRecipeRunning(false);
-        const res = evaluateRecipeResult({
-          selectedIds: recipeSelected,
-          mistakes: nextMistakes,
-          remainingSeconds: recipeSeconds,
-        });
-        setRecipeFeedback(
-          `เลือกวัสดุผิดครบ ${RECIPE_MAX_MISTAKES} ครั้ง กด "ลองใหม่" ได้เลย`
-        );
-        onCompleteMinigame('recipe', res.passed, res.score);
-      } else {
-        setRecipeFeedback(
-          `"${item.label}" ไม่ได้อยู่ในสูตรกระทง (พลาด ${nextMistakes}/${RECIPE_MAX_MISTAKES})`
-        );
-      }
-    }
-  };
-
-  const startAssembly = () => {
-    onResetMinigame('assembly');
-    setPlacedCount(0);
-    setAssemblySlips(0);
-    setAssemblyFeedback('เริ่มจากชิ้นที่ 1: ฐานหยวกกล้วย');
-  };
-
-  const handleAssemblyChoice = (itemId: string) => {
-    if (progress.assembly.status === 'passed' || progress.assembly.status === 'failed') {
-      return;
-    }
-    const check = checkAssemblyTap(placedCount, itemId);
-    if (check.correct) {
-      setPlacedCount(check.nextPlacedCount);
-      if (check.nextPlacedCount === ASSEMBLY_STEPS.length) {
-        const res = evaluateAssemblyResult({
-          placedCount: check.nextPlacedCount,
-          slips: assemblySlips,
-        });
-        setAssemblyFeedback(`ประกอบกระทงครบ 4 ชั้นอย่างประณีต! ได้ ${res.score} คะแนน`);
-        onCompleteMinigame('assembly', res.passed, res.score);
-      } else {
-        const nextStep = ASSEMBLY_STEPS[check.nextPlacedCount];
-        setAssemblyFeedback(`ถูกต้อง! ขั้นต่อไปเลือก "${nextStep.label}"`);
-      }
-    } else {
-      const nextSlips = assemblySlips + 1;
-      setAssemblySlips(nextSlips);
-      if (nextSlips >= ASSEMBLY_MAX_SLIPS) {
-        const res = evaluateAssemblyResult({
-          placedCount,
-          slips: nextSlips,
-        });
-        setAssemblyFeedback('เรียงลำดับพลาดครบ 3 ครั้ง ลองประกอบใหม่อีกครั้งนะ');
-        onCompleteMinigame('assembly', res.passed, res.score);
-      } else {
-        setAssemblyFeedback(
-          `ยังไม่ถึงขั้นนั้น ต้องวาง "${check.expectedItem.label}" ก่อน (พลาด ${nextSlips}/${ASSEMBLY_MAX_SLIPS})`
-        );
-      }
-    }
-  };
 
   const startRhythm = () => {
     onResetMinigame('rhythm');
@@ -291,6 +498,15 @@ export function MinigameSuite({
 
   const allPassed = areAllMinigamesPassed(progress);
   const quality = computeKrathongQuality(progress);
+
+  const streamDist = Math.abs(streamPos - 0.5);
+  const streamZone: 'center' | 'near' | 'outer' =
+    streamDist <= 0.13 ? 'center' : streamDist <= 0.27 ? 'near' : 'outer';
+
+  const stackDist = Math.abs(stackPos - 0.5);
+  const stackZone: 'center' | 'near' | 'outer' =
+    stackDist <= 0.13 ? 'center' : stackDist <= 0.27 ? 'near' : 'outer';
+
   const rhythmDistance = Math.abs(beatPos - 0.5);
   const rhythmZone: 'center' | 'near' | 'outer' =
     rhythmDistance <= 0.13 ? 'center' : rhythmDistance <= 0.27 ? 'near' : 'outer';
@@ -300,9 +516,9 @@ export function MinigameSuite({
       <nav className="minigame-tabs" aria-label="ด่านมินิเกมประดิษฐ์กระทง">
         {(
           [
-            { id: 'recipe', label: '1. คัดวัสดุ' },
-            { id: 'assembly', label: '2. ประกอบลำดับ' },
-            { id: 'rhythm', label: '3. แสงจังหวะ' },
+            { id: 'recipe', label: '1. สายน้ำคัดวัสดุ' },
+            { id: 'assembly', label: '2. วางชั้นตรงแกน' },
+            { id: 'rhythm', label: '3. แสงเทียนจังหวะ' },
           ] as const
         ).map((tab) => {
           const unlocked = isMinigameUnlocked(progress, tab.id);
@@ -334,36 +550,76 @@ export function MinigameSuite({
       </nav>
 
       {activeGame === 'recipe' && (
-        <section className="minigame-panel" aria-label="ด่านที่ 1 คัดวัสดุตามสูตร">
+        <section className="minigame-panel" aria-label="ด่านที่ 1 สายน้ำช้อนยอดวัสดุทอง">
           <div className="minigame-panel__top">
             <p className="minigame-desc">
-              สูตรคู่รัก: <strong>ใบตองตานีสด, หยวกกล้วย, ดอกบัวชมพู, เทียนหอมคู่</strong>
+              เล็งให้ของมงคลเข้า <strong>วงกระชอนทองตรงกลาง</strong> แล้วกดช้อนรับ! (ระวังใบไม้แห้ง/ขยะ)
             </p>
             <div className="minigame-stats">
-              <span>เวลา: {recipeSeconds} วินาที</span>
+              <span>ช้อนแล้ว: {recipeSelected.length}/4</span>
+              <span>เวลา: {recipeSeconds}s</span>
               <span>พลาด: {recipeMistakes}/{RECIPE_MAX_MISTAKES}</span>
             </div>
           </div>
-          <progress
-            className="minigame-progress"
-            value={recipeSelected.length}
-            max={RECIPE_TARGET_IDS.length}
-            aria-label="จำนวนวัสดุที่คัดเลือกถูกต้อง"
-          />
 
-          <div className="recipe-grid">
+          <div className="rhythm-track rhythm-track--canal" aria-hidden="true">
+            <div className="rhythm-sweetspot" />
+            <div
+              className={`floating-stream-token ${
+                currentStreamItem?.isTarget ? 'is-sacred' : 'is-decoy'
+              }`}
+              style={{ left: `${Math.round(streamPos * 100)}%` }}
+            >
+              <span>{currentStreamItem?.emoji}</span>
+            </div>
+          </div>
+
+          <div className="arcade-spotlight-row">
+            <span
+              className={`stream-item-pill ${
+                currentStreamItem?.isTarget ? 'is-sacred' : 'is-decoy'
+              }`}
+            >
+              กำลังลอยมา: {currentStreamItem?.emoji}{' '}
+              <strong>{currentStreamItem?.label}</strong>{' '}
+              {currentStreamItem?.isTarget ? '(ของมงคล — รอเข้ากลางแล้วช้อน!)' : '(สิ่งเจือปน — ห้ามช้อน!)'}
+            </span>
+          </div>
+
+          <p
+            id={streamCueId}
+            className={`rhythm-cue-pill ${
+              recipeRunning ? `rhythm-cue-pill--${streamZone}` : ''
+            }`}
+          >
+            {!recipeRunning
+              ? `จังหวะสายน้ำ (${STREAM_ZONES[2].label}): กดเริ่มด่าน 1 เพื่อช้อนวัสดุตามจังหวะน้ำไหล`
+              : !currentStreamItem?.isTarget
+                ? '⚠ สิ่งเจือปนกำลังลอยผ่าน — กด "ปัดสิ่งเจือปนออก" หรือปล่อยผ่านไป!'
+                : streamZone === 'center'
+                  ? `★ "${currentStreamItem.label}" เข้ากลางวงทองเป๊ะ — กดช้อนรับตอนนี้!`
+                  : streamZone === 'near'
+                    ? `◎ "${currentStreamItem.label}" เข้าขอบวงทองแล้ว ช้อนได้เลย!`
+                    : `○ รอให้ "${currentStreamItem.label}" ลอยเข้าวงสีทองตรงกลาง...`}
+          </p>
+
+          <div className="recipe-collected-bar" aria-label="ถาดวัสดุสำหรับตรวจสอบ">
             {RECIPE_TRAY_ITEMS.map((item) => {
               const picked = recipeSelected.includes(item.id);
+              const dismissed = recipeDismissed.includes(item.id);
+              const isCurrent = recipeRunning && currentStreamItem?.id === item.id;
               return (
                 <button
                   key={item.id}
                   type="button"
-                  className={`btn recipe-card ${picked ? 'is-picked' : ''}`}
-                  disabled={!recipeRunning || picked}
+                  className={`btn btn--sm recipe-chip ${picked ? 'is-picked' : ''} ${
+                    isCurrent ? 'is-current' : ''
+                  }`}
+                  disabled={!recipeRunning || picked || dismissed}
                   aria-pressed={picked}
-                  onClick={() => handleRecipePick(item.id)}
+                  onClick={() => handleStreamScoop(item.id)}
                 >
-                  {picked ? `✓ ${item.label}` : item.label}
+                  {picked ? `✓ ${item.label}` : `${item.emoji} ${item.label}`}
                 </button>
               );
             })}
@@ -374,18 +630,37 @@ export function MinigameSuite({
           </p>
 
           <div className="minigame-actions">
-            {!recipeRunning && (
+            {recipeRunning ? (
+              <>
+                <button
+                  ref={scoopBtnRef}
+                  type="button"
+                  className="btn btn--primary btn--lg"
+                  aria-describedby={streamCueId}
+                  onClick={() => handleStreamScoop()}
+                >
+                  ช้อนรับเข้าถาดทอง! ({recipeSelected.length}/{RECIPE_TARGET_IDS.length})
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--secondary"
+                  onClick={handleSwatDecoy}
+                >
+                  ปัดสิ่งเจือปน / ข้ามชิ้นนี้
+                </button>
+              </>
+            ) : (
               <button type="button" className="btn btn--primary" onClick={startRecipe}>
                 {progress.recipe.status === 'pending' ? 'เริ่มด่าน 1' : 'เล่นด่าน 1 ซ้ำ'}
               </button>
             )}
-            {progress.recipe.status === 'passed' && (
+            {progress.recipe.status === 'passed' && !recipeRunning && (
               <button
                 type="button"
                 className="btn btn--secondary"
                 onClick={() => setActiveGame('assembly')}
               >
-                ไปด่าน 2: ประกอบกระทง
+                ไปด่าน 2: วางชั้นกระทงตรงแกน
               </button>
             )}
           </div>
@@ -393,78 +668,123 @@ export function MinigameSuite({
       )}
 
       {activeGame === 'assembly' && (
-        <section className="minigame-panel" aria-label="ด่านที่ 2 ประกอบลำดับชั้นกระทง">
+        <section className="minigame-panel" aria-label="ด่านที่ 2 วางชั้นกระทงตรงแกนทอง">
           <div className="minigame-panel__top">
             <p className="minigame-desc">
-              แตะชิ้นส่วนตามลำดับ <strong>1 → 2 → 3 → 4</strong> หรือลากมาวางในช่องประกอบ
+              จังหวะที่ชิ้นส่วนเลื่อนผ่าน <strong>แกนทองตรงกลาง</strong> ให้กดวางซ้อนทีละชั้น (1 → 4)!
             </p>
             <div className="minigame-stats">
-              <span>ประกอบแล้ว: {placedCount}/4</span>
+              <span>ตั้งชั้นแล้ว: {placedCount}/4</span>
               <span>พลาด: {assemblySlips}/{ASSEMBLY_MAX_SLIPS}</span>
             </div>
           </div>
 
-          <div
-            className="assembly-dropzone"
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
-              e.preventDefault();
-              const itemId = e.dataTransfer.getData('text/plain');
-              if (itemId) handleAssemblyChoice(itemId);
-            }}
-          >
-            {ASSEMBLY_STEPS.map((step, index) => {
-              const filled = index < placedCount;
+          <div className="rhythm-track rhythm-track--stack" aria-hidden="true">
+            <div className="rhythm-sweetspot" />
+            <div className="stack-center-line" />
+            {placedCount < ASSEMBLY_STEPS.length && (
+              <div
+                className="floating-stream-token is-sacred"
+                style={{ left: `${Math.round(stackPos * 100)}%` }}
+              >
+                <span>{currentStep.emoji}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="stack-tower-stage" aria-label="หอประกอบชั้นกระทง">
+            {[...ASSEMBLY_STEPS].reverse().map((step) => {
+              const idx = step.stepOrder - 1;
+              const filled = idx < placedCount;
+              const isCurrent = idx === placedCount && progress.assembly.status !== 'passed';
+              const offsetNorm = placedOffsets[idx] ?? 0.5;
+              const shiftPx = Math.round((offsetNorm - 0.5) * 90);
               return (
                 <div
                   key={step.id}
-                  className={`assembly-slot ${filled ? 'is-filled' : ''}`}
+                  className={`stack-layer-row ${filled ? 'is-filled' : ''} ${
+                    isCurrent ? 'is-current' : ''
+                  }`}
                 >
-                  {filled ? `✓ ${step.label}` : `รอขั้นที่ ${index + 1}`}
+                  <div
+                    className="stack-layer-bar"
+                    style={
+                      filled
+                        ? { transform: `translateX(${shiftPx}px)` }
+                        : undefined
+                    }
+                  >
+                    {filled
+                      ? `✓ ${step.emoji} ${step.label}`
+                      : isCurrent
+                        ? `▼ กำลังเล็ง: ${step.emoji} ${step.label}`
+                        : `○ รอชั้นที่ ${step.stepOrder}`}
+                  </div>
                 </div>
               );
             })}
           </div>
 
-          <div className="assembly-tiles">
-            {ASSEMBLY_TILES_DISPLAY_ORDER.map((item) => {
-              const alreadyPlaced = item.stepOrder <= placedCount;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  draggable={!alreadyPlaced && progress.assembly.status !== 'failed'}
-                  onDragStart={(e) => e.dataTransfer.setData('text/plain', item.id)}
-                  className={`btn assembly-tile ${alreadyPlaced ? 'is-placed' : ''}`}
-                  disabled={
-                    alreadyPlaced ||
-                    progress.assembly.status === 'failed' ||
-                    progress.assembly.status === 'passed'
-                  }
-                  onClick={() => handleAssemblyChoice(item.id)}
-                >
-                  {item.label}
-                </button>
-              );
-            })}
-          </div>
+          <p
+            id={stackCueId}
+            className={`rhythm-cue-pill ${
+              stackRunning ? `rhythm-cue-pill--${stackZone}` : ''
+            }`}
+          >
+            {!stackRunning
+              ? 'กด "เริ่มเล็งวางชั้นกระทง" เพื่อให้ชิ้นส่วนเคลื่อนซ้าย-ขวาเหมือนเกมจังหวะแสงเทียน!'
+              : stackZone === 'center'
+                ? `★ "${currentStep.label}" ตรงแกนทองเป๊ะ — กดวางตอนนี้เลย!`
+                : stackZone === 'near'
+                  ? `◎ ใกล้ตรงแกนกลางแล้ว กดวางได้!`
+                  : `○ รอให้ "${currentStep.label}" เลื่อนเข้าหาเส้นแกนทอง...`}
+          </p>
 
           <p className="minigame-feedback" role="status" aria-live="polite">
             {assemblyFeedback}
           </p>
 
           <div className="minigame-actions">
-            <button type="button" className="btn btn--secondary" onClick={startAssembly}>
-              {progress.assembly.status === 'failed' ? 'ประกอบใหม่ (Retry)' : 'เริ่มเรียงใหม่'}
-            </button>
-            {progress.assembly.status === 'passed' && (
+            {stackRunning && placedCount < ASSEMBLY_STEPS.length ? (
               <button
+                ref={stackDropBtnRef}
                 type="button"
-                className="btn btn--primary"
-                onClick={() => setActiveGame('rhythm')}
+                className="btn btn--primary btn--lg"
+                aria-describedby={stackCueId}
+                onClick={handleStackDrop}
               >
-                ไปด่าน 3: ประดับแสงตามจังหวะ
+                วางชั้นกระทงตรงแกน! ({placedCount + 1}/4)
               </button>
+            ) : (
+              progress.assembly.status !== 'passed' && (
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  onClick={startAssembly}
+                >
+                  {progress.assembly.status === 'failed'
+                    ? 'ประกอบใหม่ (Retry)'
+                    : 'เริ่มเล็งวางชั้นกระทง'}
+                </button>
+              )
+            )}
+            {progress.assembly.status === 'passed' && (
+              <>
+                <button
+                  type="button"
+                  className="btn btn--secondary"
+                  onClick={startAssembly}
+                >
+                  เล่นด่าน 2 ซ้ำเพื่อเพิ่มคะแนน
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  onClick={() => setActiveGame('rhythm')}
+                >
+                  ไปด่าน 3: ประดับแสงเทียนตามจังหวะ
+                </button>
+              </>
             )}
           </div>
         </section>
@@ -476,12 +796,23 @@ export function MinigameSuite({
             <p className="minigame-desc">
               {reducedMotion
                 ? 'โหมดลดการเคลื่อนไหว: แสงจะเลื่อนเป็นจังหวะช้าๆ แตะเมื่ออยู่ช่วงกลางสีทอง'
-                : 'แตะให้ตรงโซนสีทองตรงกลางทั้งหมด 5 จังหวะ เพื่อจุดประกายกระทง'}
+                : 'แตะให้ตรงโซนสีทองตรงกลางทั้งหมด 5 จังหวะ เพื่อจุดประกายแสงเทียนคู่รัก'}
             </p>
             <div className="minigame-stats">
               <span>จังหวะ: {beatIndex}/{RHYTHM_TOTAL_BEATS}</span>
               <span>คะแนน: {rhythmPoints}/100</span>
             </div>
+          </div>
+
+          <div className="rhythm-candle-orbs" aria-hidden="true">
+            {Array.from({ length: RHYTHM_TOTAL_BEATS }).map((_, idx) => (
+              <span
+                key={idx}
+                className={`candle-orb ${idx < beatIndex ? 'is-lit' : ''}`}
+              >
+                {idx < beatIndex ? '🕯️' : '○'}
+              </span>
+            ))}
           </div>
 
           <div className="rhythm-track" aria-hidden="true">

@@ -36,33 +36,38 @@ function MinigameHarness({ reducedMotion = false }: { reducedMotion?: boolean })
   );
 }
 
-describe('MinigameSuite UI flow (3 sequential games)', () => {
-  it('supports fail/retry in Minigame 1 and sequential completion through Minigame 3', () => {
+describe('MinigameSuite UI flow (3 arcade timing & reflex games)', () => {
+  it('supports fail/retry in Canal Stream Catcher (Game 1), Pendulum Stacker (Game 2), and Candle Rhythm (Game 3)', () => {
     render(<MinigameHarness reducedMotion />);
 
+    // Game 1: Fail by scooping 3 decoys, then retry and scoop all 4 sacred offerings in golden zone
     fireEvent.click(screen.getByRole('button', { name: 'เริ่มด่าน 1' }));
-    fireEvent.click(screen.getByRole('button', { name: 'ใบไม้แห้ง' }));
-    fireEvent.click(screen.getByRole('button', { name: 'เศษพลาสติก' }));
-    fireEvent.click(screen.getByRole('button', { name: 'ก้อนกรวด' }));
+    fireEvent.click(screen.getByRole('button', { name: /ใบไม้แห้ง/i }));
+    fireEvent.click(screen.getByRole('button', { name: /เศษพลาสติก/i }));
+    fireEvent.click(screen.getByRole('button', { name: /ก้อนกรวด/i }));
 
     expect(screen.getByText(/เลือกวัสดุผิดครบ 3 ครั้ง/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'เล่นด่าน 1 ซ้ำ' }));
-    fireEvent.click(screen.getByRole('button', { name: 'ใบตองตานีสด' }));
-    fireEvent.click(screen.getByRole('button', { name: 'หยวกกล้วย' }));
-    fireEvent.click(screen.getByRole('button', { name: 'ดอกบัวชมพู' }));
-    fireEvent.click(screen.getByRole('button', { name: 'เทียนหอมคู่' }));
+    // In reducedMotion, initial streamPos is 0.5 (golden center sweetspot)
+    fireEvent.click(screen.getByRole('button', { name: /ใบตองตานีสด/i }));
+    fireEvent.click(screen.getByRole('button', { name: /หยวกกล้วย/i }));
+    fireEvent.click(screen.getByRole('button', { name: /ดอกบัวชมพู/i }));
+    fireEvent.click(screen.getByRole('button', { name: /เทียนหอมคู่/i }));
 
-    expect(screen.getByText(/เยี่ยมมาก!/i)).toBeInTheDocument();
+    expect(screen.getByText(/เยี่ยมมาก! ช้อนยอดวัสดุครบทั้ง 4 ชิ้น/i)).toBeInTheDocument();
 
+    // Game 2: Precision Pendulum Tower Stacker (4 layers)
     fireEvent.click(screen.getByRole('button', { name: /ไปด่าน 2/i }));
-    fireEvent.click(screen.getByRole('button', { name: '1. ฐานหยวกกล้วย' }));
-    fireEvent.click(screen.getByRole('button', { name: '2. กลีบใบตองพับ' }));
-    fireEvent.click(screen.getByRole('button', { name: '3. พวงดอกไม้คู่' }));
-    fireEvent.click(screen.getByRole('button', { name: '4. ธูปเทียนอธิษฐาน' }));
+    fireEvent.click(screen.getByRole('button', { name: /เริ่มเล็งวางชั้นกระทง/i }));
 
-    expect(screen.getByText(/ประกอบกระทงครบ 4 ชั้น/i)).toBeInTheDocument();
+    for (let layer = 0; layer < 4; layer += 1) {
+      fireEvent.click(screen.getByRole('button', { name: /วางชั้นกระทงตรงแกน/i }));
+    }
 
+    expect(screen.getByText(/ประกอบกระทงครบ 4 ชั้นสมดุลสวยงาม/i)).toBeInTheDocument();
+
+    // Game 3: Candlelight Rhythm (5 beats)
     fireEvent.click(screen.getByRole('button', { name: /ไปด่าน 3/i }));
     expect(screen.getByText(/โหมดลดการเคลื่อนไหว/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'เริ่มจับจังหวะแสง' }));

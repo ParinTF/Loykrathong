@@ -8,133 +8,36 @@ import type {
 export interface RecipeOption {
   id: string;
   label: string;
+  emoji: string;
   isTarget: boolean;
   category: 'leaf' | 'flower' | 'light' | 'decoy';
 }
 
-export const RECIPE_DURATION_SECONDS = 20;
+export const RECIPE_DURATION_SECONDS = 26;
 export const RECIPE_MAX_MISTAKES = 3;
 
 export const RECIPE_TRAY_ITEMS: RecipeOption[] = [
-  { id: 'banana-tani', label: 'ใบตองตานีสด', isTarget: true, category: 'leaf' },
-  { id: 'dry-leaf', label: 'ใบไม้แห้ง', isTarget: false, category: 'decoy' },
-  { id: 'banana-trunk', label: 'หยวกกล้วย', isTarget: true, category: 'leaf' },
-  { id: 'plastic-bag', label: 'เศษพลาสติก', isTarget: false, category: 'decoy' },
-  { id: 'pink-lotus', label: 'ดอกบัวชมพู', isTarget: true, category: 'flower' },
-  { id: 'pebble', label: 'ก้อนกรวด', isTarget: false, category: 'decoy' },
-  { id: 'scented-candle', label: 'เทียนหอมคู่', isTarget: true, category: 'light' },
-  { id: 'twig', label: 'กิ่งไม้ผุ', isTarget: false, category: 'decoy' },
+  { id: 'banana-tani', label: 'ใบตองตานีสด', emoji: '🌿', isTarget: true, category: 'leaf' },
+  { id: 'dry-leaf', label: 'ใบไม้แห้ง', emoji: '🍂', isTarget: false, category: 'decoy' },
+  { id: 'banana-trunk', label: 'หยวกกล้วย', emoji: '🎋', isTarget: true, category: 'leaf' },
+  { id: 'plastic-bag', label: 'เศษพลาสติก', emoji: '🛍️', isTarget: false, category: 'decoy' },
+  { id: 'pink-lotus', label: 'ดอกบัวชมพู', emoji: '🪷', isTarget: true, category: 'flower' },
+  { id: 'pebble', label: 'ก้อนกรวด', emoji: '🪨', isTarget: false, category: 'decoy' },
+  { id: 'scented-candle', label: 'เทียนหอมคู่', emoji: '🕯️', isTarget: true, category: 'light' },
+  { id: 'twig', label: 'กิ่งไม้ผุ', emoji: '🪵', isTarget: false, category: 'decoy' },
 ];
 
 export const RECIPE_TARGET_IDS = RECIPE_TRAY_ITEMS.filter((i) => i.isTarget).map(
   (i) => i.id
 );
 
-export function evaluateRecipeResult(params: {
-  selectedIds: string[];
-  mistakes: number;
-  remainingSeconds: number;
-}): { passed: boolean; score: number } {
-  const allTargetsPicked = RECIPE_TARGET_IDS.every((id) =>
-    params.selectedIds.includes(id)
-  );
-  if (!allTargetsPicked || params.mistakes >= RECIPE_MAX_MISTAKES || params.remainingSeconds <= 0) {
-    return {
-      passed: false,
-      score: Math.max(0, params.selectedIds.length * 12 - params.mistakes * 5),
-    };
-  }
-  const raw =
-    65 + Math.round(params.remainingSeconds * 1.5) - params.mistakes * 8;
-  return {
-    passed: true,
-    score: Math.max(60, Math.min(100, raw)),
-  };
-}
-
-export interface AssemblyStepItem {
-  id: string;
-  stepOrder: number; // 1..4
-  label: string;
-  hint: string;
-}
-
-export const ASSEMBLY_STEPS: AssemblyStepItem[] = [
-  {
-    id: 'step-base',
-    stepOrder: 1,
-    label: '1. ฐานหยวกกล้วย',
-    hint: 'วางฐานให้มั่นคงก่อนพับกลีบ',
-  },
-  {
-    id: 'step-petals',
-    stepOrder: 2,
-    label: '2. กลีบใบตองพับ',
-    hint: 'เรียงกลีบกระทงล้อมรอบฐาน',
-  },
-  {
-    id: 'step-flowers',
-    stepOrder: 3,
-    label: '3. พวงดอกไม้คู่',
-    hint: 'ประดับดอกบัวและกลีบกุหลาบ',
-  },
-  {
-    id: 'step-candle',
-    stepOrder: 4,
-    label: '4. ธูปเทียนอธิษฐาน',
-    hint: 'ปักเทียนหอมและธูปกลางกระทง',
-  },
-];
-
-// Deterministic display order that differs from sequential 1..4 so player actually orders pieces
-export const ASSEMBLY_TILES_DISPLAY_ORDER: AssemblyStepItem[] = [
-  ASSEMBLY_STEPS[2], // พวงดอกไม้คู่
-  ASSEMBLY_STEPS[0], // ฐานหยวกกล้วย
-  ASSEMBLY_STEPS[3], // ธูปเทียนอธิษฐาน
-  ASSEMBLY_STEPS[1], // กลีบใบตองพับ
-];
-
-export const ASSEMBLY_MAX_SLIPS = 3;
-
-export function checkAssemblyTap(
-  placedCount: number,
-  tappedItemId: string
-): { correct: boolean; expectedItem: AssemblyStepItem; nextPlacedCount: number } {
-  const expectedItem = ASSEMBLY_STEPS[placedCount] ?? ASSEMBLY_STEPS[ASSEMBLY_STEPS.length - 1];
-  const correct = expectedItem.id === tappedItemId;
-  return {
-    correct,
-    expectedItem,
-    nextPlacedCount: correct ? placedCount + 1 : placedCount,
-  };
-}
-
-export function evaluateAssemblyResult(params: {
-  placedCount: number;
-  slips: number;
-}): { passed: boolean; score: number } {
-  if (params.placedCount < ASSEMBLY_STEPS.length || params.slips >= ASSEMBLY_MAX_SLIPS) {
-    return {
-      passed: false,
-      score: Math.max(0, params.placedCount * 15 - params.slips * 5),
-    };
-  }
-  return {
-    passed: true,
-    score: Math.max(60, Math.min(100, 100 - params.slips * 15)),
-  };
-}
-
-export const RHYTHM_TOTAL_BEATS = 5;
-export const RHYTHM_PASS_THRESHOLD = 55;
-
-export type BeatJudgment = 'perfect' | 'good' | 'miss';
+export type TimingJudgment = 'perfect' | 'good' | 'miss';
 
 /**
- * Evaluates a tap position in normalized [0..1] track space where 0.5 is dead center.
+ * Evaluates a catch/stack/rhythm tap in normalized [0..1] track space where 0.5 is dead center.
  */
 export function judgeRhythmTap(normalizedPos: number): {
-  judgment: BeatJudgment;
+  judgment: TimingJudgment;
   points: number;
 } {
   const distanceFromCenter = Math.abs(normalizedPos - 0.5);
@@ -146,6 +49,180 @@ export function judgeRhythmTap(normalizedPos: number): {
   }
   return { judgment: 'miss', points: 4 };
 }
+
+export function judgeStreamScoop(
+  normalizedPos: number,
+  item: RecipeOption
+): {
+  caught: boolean;
+  mistake: boolean;
+  judgment: TimingJudgment;
+  points: number;
+} {
+  const dist = Math.abs(normalizedPos - 0.5);
+  const inZone = dist <= 0.27;
+  if (!item.isTarget) {
+    return {
+      caught: false,
+      mistake: true,
+      judgment: 'miss',
+      points: 0,
+    };
+  }
+  if (!inZone) {
+    return {
+      caught: false,
+      mistake: true,
+      judgment: 'miss',
+      points: 0,
+    };
+  }
+  if (dist <= 0.13) {
+    return { caught: true, mistake: false, judgment: 'perfect', points: 25 };
+  }
+  return { caught: true, mistake: false, judgment: 'good', points: 20 };
+}
+
+export function evaluateRecipeResult(params: {
+  selectedIds: string[];
+  mistakes: number;
+  remainingSeconds: number;
+  timingBonus?: number;
+}): { passed: boolean; score: number } {
+  const allTargetsPicked = RECIPE_TARGET_IDS.every((id) =>
+    params.selectedIds.includes(id)
+  );
+  if (
+    !allTargetsPicked ||
+    params.mistakes >= RECIPE_MAX_MISTAKES ||
+    params.remainingSeconds <= 0
+  ) {
+    return {
+      passed: false,
+      score: Math.max(0, params.selectedIds.length * 12 - params.mistakes * 5),
+    };
+  }
+  const raw =
+    66 +
+    Math.round(params.remainingSeconds * 1.1) +
+    Math.round(params.timingBonus ?? 6) -
+    params.mistakes * 8;
+  return {
+    passed: true,
+    score: Math.max(60, Math.min(100, raw)),
+  };
+}
+
+export interface AssemblyStepItem {
+  id: string;
+  stepOrder: number; // 1..4
+  label: string;
+  emoji: string;
+  hint: string;
+  speedMultiplier: number;
+}
+
+export const ASSEMBLY_STEPS: AssemblyStepItem[] = [
+  {
+    id: 'step-base',
+    stepOrder: 1,
+    label: '1. ฐานหยวกกล้วย',
+    emoji: '🎋',
+    hint: 'เล็งให้ฐานหยวกกล้วยตรงแกนทองตรงกลาง',
+    speedMultiplier: 1.0,
+  },
+  {
+    id: 'step-petals',
+    stepOrder: 2,
+    label: '2. กลีบใบตองพับ',
+    emoji: '🌿',
+    hint: 'วางกลีบใบตองซ้อนทับฐานให้สมมาตร',
+    speedMultiplier: 1.18,
+  },
+  {
+    id: 'step-flowers',
+    stepOrder: 3,
+    label: '3. พวงดอกไม้คู่',
+    emoji: '🪷',
+    hint: 'ประดับดอกบัวชมพูคู่กลางวงกลีบ',
+    speedMultiplier: 1.35,
+  },
+  {
+    id: 'step-candle',
+    stepOrder: 4,
+    label: '4. ธูปเทียนอธิษฐาน',
+    emoji: '🕯️',
+    hint: 'ปักธูปเทียนยอดทองให้ตั้งตรงกลางกระทงเป๊ะ!',
+    speedMultiplier: 1.52,
+  },
+];
+
+export const ASSEMBLY_TILES_DISPLAY_ORDER: AssemblyStepItem[] = [
+  ASSEMBLY_STEPS[2],
+  ASSEMBLY_STEPS[0],
+  ASSEMBLY_STEPS[3],
+  ASSEMBLY_STEPS[1],
+];
+
+export const ASSEMBLY_MAX_SLIPS = 3;
+
+export function judgeStackDrop(normalizedPos: number): {
+  aligned: boolean;
+  judgment: TimingJudgment;
+  points: number;
+} {
+  const dist = Math.abs(normalizedPos - 0.5);
+  if (dist <= 0.13) {
+    return { aligned: true, judgment: 'perfect', points: 25 };
+  }
+  if (dist <= 0.27) {
+    return { aligned: true, judgment: 'good', points: 20 };
+  }
+  return { aligned: false, judgment: 'miss', points: 0 };
+}
+
+export function checkAssemblyTap(
+  placedCount: number,
+  tappedItemId: string
+): { correct: boolean; expectedItem: AssemblyStepItem; nextPlacedCount: number } {
+  const expectedItem =
+    ASSEMBLY_STEPS[placedCount] ?? ASSEMBLY_STEPS[ASSEMBLY_STEPS.length - 1];
+  const correct = expectedItem.id === tappedItemId;
+  return {
+    correct,
+    expectedItem,
+    nextPlacedCount: correct ? placedCount + 1 : placedCount,
+  };
+}
+
+export function evaluateAssemblyResult(params: {
+  placedCount: number;
+  slips: number;
+  alignmentPoints?: number;
+}): { passed: boolean; score: number } {
+  if (
+    params.placedCount < ASSEMBLY_STEPS.length ||
+    params.slips >= ASSEMBLY_MAX_SLIPS
+  ) {
+    return {
+      passed: false,
+      score: Math.max(0, params.placedCount * 15 - params.slips * 5),
+    };
+  }
+  const baseScore =
+    params.alignmentPoints !== undefined
+      ? params.alignmentPoints - params.slips * 8
+      : 100 - params.slips * 15;
+  return {
+    passed: true,
+    score: Math.max(60, Math.min(100, baseScore)),
+  };
+}
+
+export const RHYTHM_TOTAL_BEATS = 5;
+export const RHYTHM_PASS_THRESHOLD = 55;
+
+export type BeatJudgment = TimingJudgment;
 
 export function evaluateRhythmResult(totalPoints: number): {
   passed: boolean;

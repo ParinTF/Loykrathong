@@ -15,6 +15,23 @@ describe('GameShell UI, Accessibility & Minigame Flow', () => {
       screen.getByRole('heading', { level: 1, name: /คืนเพ็ญริมน้ำ/i })
     ).toBeInTheDocument();
 
+    // Verify new romantic 3D landing page sections & pauseable ambient motion control
+    expect(
+      screen.getByRole('navigation', { name: /เมนูหลักหน้าแรก/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 2, name: /4 โมเมนต์พิเศษ/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 2, name: /แรงบันดาลใจจาก 6 สถานที่จริง/i })
+    ).toBeInTheDocument();
+
+    const pauseBtn = screen.getByRole('button', { name: /พักเอฟเฟกต์โคมลอย/i });
+    fireEvent.click(pauseBtn);
+    expect(
+      screen.getByRole('button', { name: /เล่นเอฟเฟกต์โคมลอย/i })
+    ).toBeInTheDocument();
+
     const nameInputs = screen.getAllByLabelText('ชื่อตัวละคร');
     expect(nameInputs).toHaveLength(2);
     fireEvent.change(nameInputs[0], { target: { value: 'จันทร์เจ้า' } });

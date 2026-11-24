@@ -1,69 +1,32 @@
-# คืนเพ็ญริมน้ำ — Loy Krathong Couple Festival (MVP)
+# คืนเพ็ญริมน้ำ 3D — Loy Krathong Couple Festival (3D Online Co-op & Local Edition)
 
-เกมเว็บแนว Top-Down 2D Romantic Open-World เทศกาลลอยกระทงสำหรับคู่รัก (Single-Device Local Co-op / Pass-and-Play) รองรับมือถือตั้งแต่หน้าจอ `320px`–`430px+` จนถึงเดสก์ท็อป ทำงานแบบออฟไลน์เต็มรูปแบบหลังโหลดไฟล์ Static และพร้อม Deploy บน Render Static Site
+เกมเว็บแนว **3D Romantic Open-World (Three.js + TypeScript 7)** เทศกาลลอยกระทงสำหรับคู่รัก รองรับทั้ง **โหมดเล่นออนไลน์ทางไกลแบบเรียลไทม์ (Online Couple Room ผ่าน WebSocket)** และ **โหมดเล่นด้วยกันบนเครื่องเดียว (Local Co-op)** รองรับมือถือ `320px–430px+` จนถึงเดสก์ท็อป
 
-## ความสามารถหลัก (MVP Features)
+## ความสามารถหลัก
 
-1. **ปรับแต่งตัวละครคู่รัก 2 คน (P1 & P2)**:
-   - ตั้งชื่อ เลือกสีผิว ทรงผม สีผม และชุดไทยร่วมสมัย
-   - **เลือกรูปใบหน้าจากเครื่อง (Local-Only)**: ตรวจสอบไฟล์รูปภาพ PNG/JPG/WebP/GIF ด้วย magic bytes และปรับขนาดลง Canvas ในเครื่องเท่านั้น (ไม่มีการอัปโหลดหรือส่งเครือข่าย) บันทึกเป็น `Blob` ใน `IndexedDB` และ fallback เป็นตัวละคร SVG/Canvas อัตโนมัติหากไม่มีรูปหรือไฟล์ไม่ถูกต้อง
-   - ข้อมูลทั้งหมดเก็บใน `localStorage` + `IndexedDB` พร้อมปุ่ม **รีเซ็ตข้อมูลทั้งหมด**
-2. **แผนที่เทศกาลริมน้ำ (Phaser 3 Top-Down Open-World)**:
-   - เดินสำรวจ 5 โซน: ลานโคมยี่เป็ง, ตลาดริมคลอง (ป้าบัว/ลุงมั่น), สวนหิ่งห้อย & ศาลาคู่รัก, โต๊ะประดิษฐ์กระทง และท่าน้ำแสงจันทร์
-   - ควบคุมได้ทั้ง **จอยสติ๊กสัมผัส**, **ปุ่ม D-pad 4 ทิศทาง (44px+)**, และ **คีย์บอร์ด (`WASD` สำหรับ P1, `Arrow Keys` สำหรับ P2, `E` เพื่อโต้ตอบ)** พร้อมโหมด **เดินคู่กัน / แยกเดินอิสระ**
-3. **ภารกิจร่วมกัน + มินิเกม 3 ด่านต่อเนื่องก่อนปล่อยกระทง**:
-   - เก็บวัสดุ 3 อย่างจาก NPC และสวนดอกบัว
-   - ผ่านมินิเกม 3 ด่านต่อเนื่องที่โต๊ะประดิษฐ์กระทง:
-     1. **ด่าน 1 — คัดวัสดุตามสูตร**: จับเวลาเลือกวัตถุดิบ 4 ชิ้นจากถาด 8 ชิ้น (รองรับ Tap + Keyboard)
-     2. **ด่าน 2 — ประกอบกระทงตามลำดับชั้น**: เรียงชิ้นส่วน 1→4 ด้วยการแตะหรือลากวาง (Drag/Tap Sequence + Keyboard)
-     3. **ด่าน 3 — ประดับแสงตามจังหวะ**: แตะให้ตรงโซนสีทอง 5 จังหวะ (รองรับ Space/Tap และปรับเป็นจังหวะช้าชัดเจนในโหมด Reduced Motion)
-   - แต่ละด่านมีสถานะผ่าน/ไม่ผ่านและปุ่มเล่นซ้ำ คะแนนรวมกำหนดระดับคุณภาพกระทง (`เรียบง่ายจริงใจ`, `งดงามอบอุ่น`, `วิจิตรแสงจันทร์`) ทั้งแสง ออร่า และจำนวนกลีบดอกไม้
-4. **พิธีปล่อยกระทงที่ท่าน้ำและผลลัพธ์ในโลกจริง**:
-   - ปล่อยกระทงลงสู่แม่น้ำแสงจันทร์พร้อมการ์ดความทรงจำของคู่รัก กระทงที่ปล่อยจะลอยปรากฏจริงบนผิวน้ำในฉาก Phaser และสามารถประดิษฐ์ใบใหม่ต่อได้
-5. **Accessibility & Offline-First**:
-   - ปุ่มแตะ `>= 44px` (`48px` บนจอสัมผัส), โฟกัสคีย์บอร์ดชัด (`:focus-visible`), Native `<dialog>`, Live regions (`aria-live`), และโหมด `prefers-reduced-motion` (ปรับได้ทั้งจากระบบและในเกม)
+1. **โลกงานลอยกระทง 3 มิติเต็มรูปแบบ (Three.js WebGL 3D)**:
+   - หมุนมุมกล้องได้รอบตัว **360°** (ลากหน้าจอ / กด `Q`·`R`) ซูมเข้า-ออกด้วยลูกกลิ้งเมาส์ และสลับมุมกล้อง 3 ระดับ (**ปกติ / ใกล้ชมโคมลอยเต็มฟ้า / มุมสูงพาโนรามา**)
+   - สถาปัตยกรรมและบรรยากาศ 3 มิติ: **ศาลาไทยจัตุรมุขหลังคาซ้อน 3 ชั้นพร้อมช่อฟ้า**, **ซุ้มตลาดน้ำอัมพวา**, **ซุ้มประตูและโคมลอยยี่เป็งเต็มท้องฟ้า**, **สระบัวหิ่งห้อย 3 มิติ**, **ทางเดินหินทรายยกระดับขอบทอง**, **สะพานท่าน้ำไม้สัก**, **แม่น้ำสะท้อนแสงจันทร์**, **ป้ายกรอบภาพสถานที่จริง 3 มิติ**, และ **กระทง 3 มิติ** ลอยจริงบนผิวน้ำ
+   - **ตัวละครคู่รัก 3 มิติ**: ชุดไทยพร้อมสไบเฉียง ทรงผม 3 มิติ แกว่งแขนขณะเดิน แสดงรูปใบหน้าในกรอบทอง และเส้นแสงหัวใจเชื่อมเมื่อเดินใกล้กัน
+2. **เล่นออนไลน์คู่กับแฟนทางไกล (Real-Time Couple Room)**:
+   - สร้างรหัสห้องหรือกด **คัดลอกลิงก์ชวนแฟน (`?room=XXXXXX`)** ส่งทางแชตให้แฟนเข้าห้องได้ทันที
+   - เดินสำรวจในโลก 3 มิติเห็นกันสดๆ ส่งข้อความหัวใจลอยเหนือหัวตัวละคร (`💖`, `🪷`, `🕯️`, `🌊`) วาร์ปไปข้างแฟน และทำภารกิจร่วมกันแบบไม่ทับข้อมูลกัน
+3. **ภารกิจคู่รักช่วยกันเล่น 2 คนครบทุกจุด (2-Player Co-op Challenges)** + **มินิเกมทำกระทง 3 ด่านแอ็กชัน**
 
 ---
 
-## โครงสร้างสถาปัตยกรรม
-
-- `src/domain/`: `types.ts`, `worldMap.ts`, `minigames.ts`, `reducer.ts`, `customizationCatalog.ts` — pure TypeScript domain state & collision/quest/minigame rules (ไม่ผูกกับ DOM หรือ Phaser)
-- `src/persistence/`: `storage.ts` — `localStorage` + `IndexedDB` portrait `Blob` storage และ local image validation/resizing
-- `src/game/`: `FestivalScene.ts`, `textures.ts`, `sound.ts` — Phaser 3 rendering & procedural Canvas2D textures
-- `src/components/`: `GameShell.tsx`, `SetupScreen.tsx`, `FestivalHud.tsx`, `TouchControls.tsx`, `MinigameSuite.tsx`, `InteractionModal.tsx`, `AvatarPreview.tsx`, `KrathongIllustration.tsx`
-
----
-
-## การรันในเครื่อง (Local Development)
-
-ต้องมี Node.js 20+ และ npm
+## การรันในเครื่อง (Local & Online Room Server)
 
 ```bash
 npm ci
 npm run dev
 ```
 
-เปิดเบราว์เซอร์ไปที่ URL ที่ Vite แสดง (เช่น `http://localhost:5173`)
-
-### คำสั่งตรวจสอบและ Build
+คำสั่งตรวจสอบด้วย **TypeScript 7** และ Build สำหรับ Production:
 
 ```bash
 npm run typecheck
 npm run test
 npm run build
-npm run preview
+npm run start
 ```
-
----
-
-## ขั้นตอน Deploy บน Render (Static Site)
-
-โปรเจกต์นี้มาพร้อมไฟล์ [`render.yaml`](render.yaml) สำหรับ Render Static Site:
-
-1. เชื่อมต่อ Repository บน [Render Dashboard](https://dashboard.render.com) แล้วเลือก **New → Static Site** (หรือ Blueprint จาก `render.yaml`)
-2. ตั้งค่า Build & Publish:
-   - **Build Command**: `npm ci && npm run build`
-   - **Publish Directory**: `dist`
-3. ตั้งค่า Rewrite Rule สำหรับ SPA:
-   - **Source**: `/*` → **Destination**: `/index.html` (`Action: Rewrite`)
-4. กด Deploy — แอปทำงานแบบ Static 100% ไม่ต้องใช้ Environment Variables หรือ Backend Server

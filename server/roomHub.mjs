@@ -72,6 +72,105 @@ function createDefaultSharedState() {
   };
 }
 
+const STAGE_RANK = {
+  explore: 0,
+  craft: 1,
+  ceremony: 2,
+  released: 3,
+};
+
+function mergeSharedState(prev, incoming, options = {}) {
+  if (!incoming || typeof incoming !== 'object') return prev;
+  if (options.forceReplace) {
+    return {
+      ...createDefaultSharedState(),
+      ...incoming,
+    };
+  }
+
+  const nextInventory = {
+    'banana-leaf': Boolean(prev.inventory?.['banana-leaf'] || incoming.inventory?.['banana-leaf']),
+    'lotus-blossom': Boolean(prev.inventory?.['lotus-blossom'] || incoming.inventory?.['lotus-blossom']),
+    'candle-incense': Boolean(prev.inventory?.['candle-incense'] || incoming.inventory?.['candle-incense']),
+  };
+
+  const litSet = new Set([
+    ...(Array.isArray(prev.litLanternIds) ? prev.litLanternIds : []),
+    ...(Array.isArray(incoming.litLanternIds) ? incoming.litLanternIds : []),
+  ]);
+
+  const prevCoop = prev.coopTasks && typeof prev.coopTasks === 'object' ? prev.coopTasks : {};
+  const incCoop = incoming.coopTasks && typeof incoming.coopTasks === 'object' ? incoming.coopTasks : {};
+  const allCoopKeys = new Set([...Object.keys(prevCoop), ...Object.keys(incCoop)]);
+  /** @type {Record<string, any>} */
+  const nextCoop = {};
+  for (const key of allCoopKeys) {
+    if (options.resetTaskKey === key) continue;
+    const a = prevCoop[key] || { p1Done: false, p2Done: false, p1Score: 0, p2Score: 0, updatedAt: null };
+    const b = incCoop[key] || { p1Done: false, p2Done: false, p1Score: 0, p2Score: 0, updatedAt: null };
+    nextCoop[key] = {
+      p1Done: Boolean(a.p1Done || b.p1Done),
+      p2Done: Boolean(a.p2Done || b.p2Done),
+      p1Score: Math.max(Number(a.p1Score) || 0, Number(b.p1Score) || 0),
+      p2Score: Math.max(Number(a.p2Score) || 0, Number(b.p2Score) || 0),
+      updatedAt: b.updatedAt || a.updatedAt || new Date().toISOString(),
+    };
+  }
+
+  const mergeGame = (gid) => {
+    const a = prev.minigames?.[gid] || { status: 'pending', score: 0, attempts: 0 };
+    const b = incoming.minigames?.[gid] || a;
+    if (options.resetMinigame === gid) {
+      return { status: 'pending', score: 0, attempts: Math.max(a.attempts || 0, b.attempts || 0) };
+    }
+    const passed = a.status === 'passed' || b.status === 'passed';
+    return {
+      status: passed ? 'passed' : b.status || a.status,
+      score: passed ? Math.max(a.score || 0, b.score || 0) : (b.score ?? a.score ?? 0),
+      attempts: Math.max(a.attempts || 0, b.attempts || 0),
+    };
+  };
+
+  const nextMinigames = {
+    recipe: mergeGame('recipe'),
+    assembly: mergeGame('assembly'),
+    rhythm: mergeGame('rhythm'),
+  };
+
+  const krathongMap = new Map();
+  for (const item of Array.isArray(prev.releasedKrathongs) ? prev.releasedKrathongs : []) {
+    if (item && item.id) krathongMap.set(item.id, item);
+  }
+  for (const item of Array.isArray(incoming.releasedKrathongs) ? incoming.releasedKrathongs : []) {
+    if (item && item.id) krathongMap.set(item.id, item);
+  }
+  const nextReleased = Array.from(krathongMap.values());
+
+  const prevStage = prev.questStage || 'explore';
+  const incStage = incoming.questStage || prevStage;
+  const bestStage =
+    (STAGE_RANK[incStage] ?? 0) >= (STAGE_RANK[prevStage] ?? 0) ? incStage : prevStage;
+
+  return {
+    ...prev,
+    ...incoming,
+    inventory: nextInventory,
+    litLanternIds: Array.from(litSet),
+    pavilionBlessed: Boolean(prev.pavilionBlessed || incoming.pavilionBlessed),
+    contributedBy: {
+      p1: Math.max(prev.contributedBy?.p1 || 0, incoming.contributedBy?.p1 || 0),
+      p2: Math.max(prev.contributedBy?.p2 || 0, incoming.contributedBy?.p2 || 0),
+    },
+    questStage: bestStage,
+    minigames: nextMinigames,
+    krathongCrafted: Boolean(prev.krathongCrafted || incoming.krathongCrafted),
+    coopTasks: nextCoop,
+    krathongDesign: incoming.krathongDesign || prev.krathongDesign,
+    releasedKrathongs: nextReleased,
+    lastEventLog: incoming.lastEventLog || prev.lastEventLog,
+  };
+}
+
 export function normalizeRoomCode(raw) {
   if (typeof raw !== 'string') return '';
   return raw
@@ -382,11 +481,26 @@ export function createRoomHub() {
         }
 
         if (msg.type === 'sync_shared' && msg.shared && typeof msg.shared === 'object') {
-          joinedRoom.shared = {
-            ...joinedRoom.shared,
-            ...msg.shared,
-          };
+          joinedRoom.shared = mergeSharedState(joinedRoom.shared, msg.shared, {
+            forceReplace: Boolean(msg.forceReplace),
+            resetTaskKey: typeof msg.resetTaskKey === 'string' ? msg.resetTaskKey : undefined,
+            resetMinigame: typeof msg.resetMinigame === 'string' ? msg.resetMinigame : undefined,
+          });
           broadcastRoomSnapshot(joinedRoom);
+          return;
+        }
+
+        if (msg.type === 'coop_signal' && typeof msg.spotId === 'string') {
+          const payload = {
+            type: 'coop_signal',
+            playerId: assignedRole,
+            spotId: msg.spotId.slice(0, 48),
+            action: typeof msg.action === 'string' ? msg.action.slice(0, 48) : 'pulse',
+            value: typeof msg.value === 'number' && Number.isFinite(msg.value) ? msg.value : 0,
+            ts: Date.now(),
+          };
+          sendJson(joinedRoom.sockets.p1, payload);
+          sendJson(joinedRoom.sockets.p2, payload);
           return;
         }
 

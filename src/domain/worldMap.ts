@@ -11,10 +11,10 @@ export const SPAWN_POSITIONS: Record<PlayerId, { x: number; y: number; facing: D
 };
 
 export const PIER_WALKABLE_RECT: Rect = {
-  x: 864,
-  y: 660,
-  w: 152,
-  h: 176,
+  x: 848,
+  y: 648,
+  w: 184,
+  h: 196,
   label: 'ท่าน้ำแสงจันทร์ (สะพานไม้)',
 };
 
@@ -103,10 +103,10 @@ export const WORLD_SPOTS: WorldSpot[] = [
     radius: 74,
   },
   {
-    id: 'pavilion-couple',
+    id: 'pavilion-blessing',
     kind: 'pavilion',
     title: 'ศาลาคู่รักแสงจันทร์',
-    subtitle: 'พักชมหิ่งห้อยและรับคำอวยพรประจำคืนเพ็ญ',
+    subtitle: 'พักชมหิ่งห้อยและบรรเลงระฆังแสงจันทร์รับคำอวยพรคู่กัน',
     zoneName: 'สวนหิ่งห้อย',
     x: 490,
     y: 514,
@@ -217,6 +217,32 @@ export function resolveMovement(
     return { x: targetX, y: targetY, moved: true };
   }
 
+  // Smooth pier entrance funneling: when dragging a joystick downward near the
+  // pier approach, gently guide the character inward between the wooden railings
+  // instead of catching on the left/right riverbank corner.
+  if (
+    dy > 0 &&
+    fromY + radius >= RIVER_BANK_Y - 12 &&
+    fromX >= PIER_WALKABLE_RECT.x - 24 &&
+    fromX <= PIER_WALKABLE_RECT.x + PIER_WALKABLE_RECT.w + 24
+  ) {
+    const minPierX = PIER_WALKABLE_RECT.x + radius;
+    const maxPierX = PIER_WALKABLE_RECT.x + PIER_WALKABLE_RECT.w - radius;
+    const stepMag = Math.max(2.4, Math.hypot(dx, dy));
+    let guidedX = fromX;
+    if (fromX < minPierX) {
+      guidedX = Math.min(minPierX, fromX + stepMag);
+    } else if (fromX > maxPierX) {
+      guidedX = Math.max(maxPierX, fromX - stepMag);
+    }
+    if (isPositionWalkable(guidedX, targetY, radius)) {
+      return { x: guidedX, y: targetY, moved: true };
+    }
+    if (guidedX !== fromX && isPositionWalkable(guidedX, fromY, radius)) {
+      return { x: guidedX, y: fromY, moved: true };
+    }
+  }
+
   // Axis slide so character moves smoothly along obstacles or river bank
   if (dx !== 0 && isPositionWalkable(targetX, fromY, radius)) {
     return { x: targetX, y: fromY, moved: true };
@@ -248,5 +274,8 @@ export function findNearestSpot(x: number, y: number): WorldSpot | null {
 
 export function getSpotById(spotId: string | null): WorldSpot | null {
   if (!spotId) return null;
+  if (spotId === 'pavilion-couple') {
+    return WORLD_SPOTS.find((s) => s.id === 'pavilion-blessing') ?? null;
+  }
   return WORLD_SPOTS.find((s) => s.id === spotId) ?? null;
 }

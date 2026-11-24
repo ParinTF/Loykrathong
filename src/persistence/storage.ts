@@ -156,7 +156,7 @@ export async function processPortraitFileLocally(
     const objectUrl = URL.createObjectURL(file);
     try {
       const img = await loadImageLocally(objectUrl);
-      const size = 192;
+      const size = 128;
       const canvas = document.createElement('canvas');
       canvas.width = size;
       canvas.height = size;
@@ -454,6 +454,10 @@ export async function loadPersistedState(): Promise<GameState | null> {
         ...base.krathongDesign,
         ...(parsed.krathongDesign ?? {}),
       },
+      coopTasks:
+        parsed.coopTasks && typeof parsed.coopTasks === 'object'
+          ? parsed.coopTasks
+          : {},
       players: {
         p1: {
           ...base.players.p1,

@@ -186,6 +186,14 @@ export interface CoupleEmoteEvent {
   ts: number;
 }
 
+export interface CoopSignalEvent {
+  playerId: PlayerId;
+  spotId: string;
+  action: string;
+  value?: number;
+  ts: number;
+}
+
 export type GameAction =
   | { type: 'HYDRATE_STATE'; payload: GameState }
   | { type: 'ENTER_WORLD' }
@@ -248,6 +256,7 @@ export type GameAction =
       players: Record<PlayerId, PlayerProfile>;
       shared: SharedRoomQuestState;
       preserveMyProfile?: boolean;
+      preserveMyPosition?: boolean;
     }
   | {
       type: 'APPLY_PEER_MOVE';

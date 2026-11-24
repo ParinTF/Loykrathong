@@ -1,10 +1,28 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import type Phaser from 'phaser';
-import { createInitialGameState, gameReducer } from '../domain/reducer';
-import { getSpotById } from '../domain/worldMap';
-import type { Direction, GameState, PlayerId } from '../domain/types';
-import type { FestivalScene } from '../game/FestivalScene';
+import {
+  createInitialGameState,
+  extractSharedQuestState,
+  gameReducer,
+} from '../domain/reducer';
+import { getSpotById, isPositionWalkable } from '../domain/worldMap';
+import type {
+  CoopSignalEvent,
+  CoupleEmoteEvent,
+  Direction,
+  GameState,
+  MinigameId,
+  PlayMode,
+  PlayerId,
+} from '../domain/types';
+import type { CameraPreset, FestivalScene } from '../game/FestivalScene';
 import { playChime } from '../game/sound';
+import {
+  OnlineRoomClient,
+  generateInviteRoomCode,
+  readInitialRoomFromUrl,
+  type RoomConnectionStatus,
+  type RoomOccupancy,
+} from '../online/roomClient';
 import {
   clearAllPersistedState,
   flushStateToLocalStorageSync,
@@ -17,7 +35,7 @@ import { SetupScreen, type WorldAssetStatus } from './SetupScreen';
 import { TouchControls } from './TouchControls';
 
 export type WorldModulesTuple = [
-  typeof import('phaser'),
+  typeof import('three'),
   typeof import('../game/FestivalScene'),
 ];
 
@@ -26,7 +44,7 @@ let defaultWorldModulesPromise: Promise<WorldModulesTuple> | null = null;
 export function preloadDefaultWorldModules(): Promise<WorldModulesTuple> {
   if (!defaultWorldModulesPromise) {
     defaultWorldModulesPromise = Promise.all([
-      import('phaser'),
+      import('three'),
       import('../game/FestivalScene'),
     ]).catch((error) => {
       defaultWorldModulesPromise = null;
@@ -52,6 +70,7 @@ function isPositionOnlyChange(prev: GameState | null, next: GameState): boolean 
     prev.questStage === next.questStage &&
     prev.minigames === next.minigames &&
     prev.krathongCrafted === next.krathongCrafted &&
+    prev.coopTasks === next.coopTasks &&
     prev.krathongDesign === next.krathongDesign &&
     prev.releasedKrathongs === next.releasedKrathongs &&
     prev.players.p1.name === next.players.p1.name &&
@@ -72,6 +91,8 @@ export function GameShell({
   disablePhaser = false,
   loadWorldModules = preloadDefaultWorldModules,
 }: GameShellProps) {
+  const initialInviteCode = readInitialRoomFromUrl();
+
   const [state, dispatch] = useReducer(
     gameReducer,
     undefined,
@@ -80,6 +101,28 @@ export function GameShell({
   const [hydrated, setHydrated] = useState(false);
   const [openSpotId, setOpenSpotId] = useState<string | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
+
+  // Online Couple Room state
+  const [playMode, setPlayMode] = useState<PlayMode>(() =>
+    initialInviteCode ? 'online' : 'local'
+  );
+  const [roomCode, setRoomCode] = useState<string>(
+    () => initialInviteCode ?? generateInviteRoomCode()
+  );
+  const [myOnlineRole, setMyOnlineRole] = useState<PlayerId>(() =>
+    initialInviteCode ? 'p2' : 'p1'
+  );
+  const [roomStatus, setRoomStatus] =
+    useState<RoomConnectionStatus>('disconnected');
+  const [roomError, setRoomError] = useState<string | null>(null);
+  const [occupancy, setOccupancy] = useState<RoomOccupancy>({
+    p1: false,
+    p2: false,
+  });
+  const [lastPartnerSignal, setLastPartnerSignal] =
+    useState<CoopSignalEvent | null>(null);
+  const [cameraPreset, setCameraPreset] = useState<CameraPreset>('follow');
+
   const [worldAssetStatus, setWorldAssetStatus] = useState<WorldAssetStatus>(
     disablePhaser ? 'ready' : 'loading'
   );
@@ -90,7 +133,9 @@ export function GameShell({
   });
 
   const stageRef = useRef<HTMLDivElement>(null);
-  const phaserGameRef = useRef<Phaser.Game | null>(null);
+  const legacyEngineRef = useRef<{ destroy: (removeCanvas?: boolean) => void } | null>(
+    null
+  );
   const sceneRef = useRef<FestivalScene | null>(null);
   const loadedModulesRef = useRef<WorldModulesTuple | null>(null);
   const resetDialogRef = useRef<HTMLDialogElement>(null);
@@ -100,6 +145,22 @@ export function GameShell({
   hydratedRef.current = hydrated;
   const stateRef = useRef<GameState>(state);
   stateRef.current = state;
+
+  const playModeRef = useRef<PlayMode>(playMode);
+  playModeRef.current = playMode;
+  const myOnlineRoleRef = useRef<PlayerId>(myOnlineRole);
+  myOnlineRoleRef.current = myOnlineRole;
+
+  const roomClientRef = useRef<OnlineRoomClient | null>(null);
+  const lastSyncedSharedJsonRef = useRef<string>('');
+  const pendingSyncOptionsRef = useRef<
+    | {
+        forceReplace?: boolean;
+        resetTaskKey?: string;
+        resetMinigame?: MinigameId;
+      }
+    | undefined
+  >(undefined);
 
   const effectiveReducedMotion =
     state.settings.reducedMotionOverride === 'reduce'
@@ -135,7 +196,153 @@ export function GameShell({
     };
   }, []);
 
-  // Preload Phaser & FestivalScene during setup so offline start works after initial load
+  // Connect online room helper
+  const connectToRoom = useCallback((code: string, preferredRole: PlayerId) => {
+    if (!roomClientRef.current) {
+      roomClientRef.current = new OnlineRoomClient(
+        () => stateRef.current.players[myOnlineRoleRef.current],
+        {
+          onJoined: (payload) => {
+            setRoomCode(payload.roomCode);
+            setMyOnlineRole(payload.role);
+            myOnlineRoleRef.current = payload.role;
+            setOccupancy(payload.occupancy);
+            lastSyncedSharedJsonRef.current = JSON.stringify(payload.shared);
+            // Disable local partner AI-follow in Online Mode so each partner walks independently
+            dispatch({ type: 'SET_FOLLOW_PARTNER', enabled: false });
+            dispatch({
+              type: 'APPLY_ONLINE_SNAPSHOT',
+              myRole: payload.role,
+              players: payload.players,
+              shared: payload.shared,
+              preserveMyProfile: true,
+              preserveMyPosition: false,
+            });
+            try {
+              const nextUrl = new URL(window.location.href);
+              nextUrl.searchParams.set('room', payload.roomCode);
+              window.history.replaceState({}, '', nextUrl.toString());
+            } catch {
+              // ignore history update in test environments
+            }
+          },
+          onSnapshot: (payload) => {
+            setOccupancy(payload.occupancy);
+            lastSyncedSharedJsonRef.current = JSON.stringify(payload.shared);
+            dispatch({
+              type: 'APPLY_ONLINE_SNAPSHOT',
+              myRole: myOnlineRoleRef.current,
+              players: payload.players,
+              shared: payload.shared,
+              preserveMyProfile: true,
+              preserveMyPosition: true,
+            });
+          },
+          onPeerMoved: (playerId, position) => {
+            if (playerId !== myOnlineRoleRef.current) {
+              dispatch({ type: 'APPLY_PEER_MOVE', playerId, position });
+            }
+          },
+          onPeerProfile: (playerId, profile) => {
+            if (playerId !== myOnlineRoleRef.current) {
+              dispatch({ type: 'APPLY_PEER_PROFILE', playerId, profile });
+            }
+          },
+          onEmote: (event: CoupleEmoteEvent) => {
+            playChime('beat', stateRef.current.settings.soundEnabled);
+            sceneRef.current?.showEmote(event);
+          },
+          onCoopSignal: (signal) => {
+            setLastPartnerSignal(signal);
+          },
+          onStatusChange: (status, errMsg) => {
+            setRoomStatus(status);
+            setRoomError(errMsg);
+          },
+        }
+      );
+    }
+    setPlayMode('online');
+    roomClientRef.current.connect(code, preferredRole);
+  }, []);
+
+  const disconnectFromRoom = useCallback(() => {
+    roomClientRef.current?.disconnect();
+    setRoomStatus('disconnected');
+    setRoomError(null);
+    setOccupancy({ p1: false, p2: false });
+  }, []);
+
+  // Auto-join when opened via a partner invite URL (?room=XXXXXX) once local profile is hydrated
+  useEffect(() => {
+    if (!hydrated || !initialInviteCode) return undefined;
+    connectToRoom(initialInviteCode, 'p2');
+    return () => {
+      roomClientRef.current?.disconnect();
+    };
+  }, [hydrated, initialInviteCode, connectToRoom]);
+
+  // Clean up WebSocket on unmount
+  useEffect(() => {
+    return () => {
+      roomClientRef.current?.disconnect();
+    };
+  }, []);
+
+  // Sync my movement to partner in real time
+  const myProfile = state.players[myOnlineRole];
+  useEffect(() => {
+    if (playMode !== 'online' || roomStatus !== 'connected') return;
+    roomClientRef.current?.sendMove(myProfile.position);
+  }, [
+    playMode,
+    roomStatus,
+    myProfile.position.x,
+    myProfile.position.y,
+    myProfile.position.facing,
+  ]);
+
+  // Sync my profile (name, outfit, portrait) to partner when edited
+  useEffect(() => {
+    if (playMode !== 'online' || roomStatus !== 'connected') return;
+    roomClientRef.current?.sendProfile(myProfile);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    playMode,
+    roomStatus,
+    myProfile.name,
+    myProfile.customization,
+    myProfile.portrait.updatedAt,
+  ]);
+
+  // Sync shared quest / coop / minigame / krathong state changes to room without echoing server snapshots
+  useEffect(() => {
+    if (playMode !== 'online' || roomStatus !== 'connected') return;
+    const shared = extractSharedQuestState(state);
+    const serialized = JSON.stringify(shared);
+    if (serialized === lastSyncedSharedJsonRef.current) return;
+
+    lastSyncedSharedJsonRef.current = serialized;
+    const opts = pendingSyncOptionsRef.current;
+    pendingSyncOptionsRef.current = undefined;
+    roomClientRef.current?.sendSharedState(shared, opts);
+  }, [
+    playMode,
+    roomStatus,
+    state.inventory,
+    state.litLanternIds,
+    state.pavilionBlessed,
+    state.contributedBy,
+    state.questStage,
+    state.minigames,
+    state.krathongCrafted,
+    state.coopTasks,
+    state.krathongDesign,
+    state.releasedKrathongs,
+    state,
+  ]);
+
+  // Preload Phaser & FestivalScene during setup
   useEffect(() => {
     if (disablePhaser) {
       setWorldAssetStatus('ready');
@@ -175,7 +382,6 @@ export function GameShell({
     setAssetRetryCount((c) => c + 1);
   }, [loadWorldModules]);
 
-  // Flush pending movement state synchronously if tab hides or reloads immediately
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
     const flushNow = () => {
@@ -234,7 +440,7 @@ export function GameShell({
     }
   }, [resetOpen]);
 
-  // Mount Phaser 3 & FestivalScene once world screen is open and preloaded modules are ready
+  // Mount Three.js 3D FestivalScene once world screen is open
   useEffect(() => {
     if (
       disablePhaser ||
@@ -247,11 +453,7 @@ export function GameShell({
     }
 
     const container = stageRef.current;
-    const [phaserMod, sceneMod] = loadedModulesRef.current;
-    const PhaserLib =
-      'default' in phaserMod
-        ? (phaserMod as unknown as { default: typeof Phaser }).default
-        : phaserMod;
+    const [engineMod, sceneMod] = loadedModulesRef.current;
     const scene = new sceneMod.FestivalScene(
       stateRef.current,
       {
@@ -268,42 +470,54 @@ export function GameShell({
     sceneRef.current = scene;
 
     try {
-      const game = new PhaserLib.Game({
-        type: PhaserLib.AUTO,
-        parent: container,
-        width: container.clientWidth || 360,
-        height: container.clientHeight || 480,
-        backgroundColor: '#091026',
-        scene: [scene],
-        scale: {
-          mode: PhaserLib.Scale.RESIZE,
-          autoCenter: PhaserLib.Scale.CENTER_BOTH,
-        },
-        input: {
-          keyboard: true,
-        },
-      });
-      phaserGameRef.current = game;
+      if (typeof scene.mount === 'function') {
+        scene.mount(container);
+      } else {
+        // Test-harness compatibility when a custom mock engine tuple is injected
+        const maybeLegacy = (
+          engineMod as unknown as {
+            default?: {
+              Game?: new (cfg: Record<string, unknown>) => {
+                destroy: (b?: boolean) => void;
+              };
+            };
+          }
+        ).default;
+        if (maybeLegacy?.Game) {
+          legacyEngineRef.current = new maybeLegacy.Game({
+            parent: container,
+            scene: [scene],
+          });
+        }
+      }
     } catch {
-      phaserGameRef.current = null;
+      legacyEngineRef.current = null;
       sceneRef.current = null;
       setWorldAssetStatus('error');
     }
 
     return () => {
+      if (sceneRef.current && typeof sceneRef.current.destroy === 'function') {
+        sceneRef.current.destroy();
+      }
       sceneRef.current = null;
-      if (phaserGameRef.current) {
-        phaserGameRef.current.destroy(true);
-        phaserGameRef.current = null;
+      if (legacyEngineRef.current) {
+        legacyEngineRef.current.destroy(true);
+        legacyEngineRef.current = null;
       }
     };
   }, [state.screen, disablePhaser, worldAssetStatus]);
 
   useEffect(() => {
     if (sceneRef.current) {
-      sceneRef.current.updateSnapshot(state, effectiveReducedMotion);
+      sceneRef.current.updateSnapshot?.(
+        state,
+        effectiveReducedMotion,
+        playMode,
+        myOnlineRole
+      );
     }
-  }, [state, effectiveReducedMotion]);
+  }, [state, effectiveReducedMotion, playMode, myOnlineRole]);
 
   useEffect(() => {
     if (sceneRef.current) {
@@ -317,27 +531,95 @@ export function GameShell({
 
   const handleNudgeStep = useCallback(
     (dx: number, dy: number, facing: Direction) => {
+      const targetPlayer =
+        playModeRef.current === 'online'
+          ? myOnlineRoleRef.current
+          : stateRef.current.settings.activePlayer;
+      const transformed = sceneRef.current?.transformInputVector
+        ? sceneRef.current.transformInputVector(dx, dy)
+        : { dx, dy };
+      const nextFacing: Direction =
+        Math.abs(transformed.dx) >= Math.abs(transformed.dy)
+          ? transformed.dx >= 0
+            ? 'right'
+            : 'left'
+          : transformed.dy >= 0
+            ? 'down'
+            : 'up';
       dispatch({
         type: 'MOVE_PLAYER',
-        playerId: stateRef.current.settings.activePlayer,
-        dx,
-        dy,
-        facing,
+        playerId: targetPlayer,
+        dx: transformed.dx,
+        dy: transformed.dy,
+        facing: sceneRef.current?.transformInputVector ? nextFacing : facing,
       });
     },
     []
   );
 
+  const handleSendEmote = useCallback(
+    (emoji: string, text: string) => {
+      const sender: PlayerId =
+        playMode === 'online' ? myOnlineRole : state.settings.activePlayer;
+      if (playMode === 'online' && roomStatus === 'connected') {
+        roomClientRef.current?.sendEmote(emoji, text);
+      } else {
+        playChime('beat', state.settings.soundEnabled);
+        sceneRef.current?.showEmote?.({
+          playerId: sender,
+          emoji,
+          text,
+          ts: Date.now(),
+        });
+      }
+    },
+    [playMode, myOnlineRole, roomStatus, state.settings.activePlayer, state.settings.soundEnabled]
+  );
+
+  const handleWalkToPartner = useCallback(() => {
+    const partnerRole: PlayerId = myOnlineRole === 'p1' ? 'p2' : 'p1';
+    const partnerPos = state.players[partnerRole].position;
+    const myPos = state.players[myOnlineRole].position;
+    const offsets = [
+      { ox: -42, oy: 0 },
+      { ox: 42, oy: 0 },
+      { ox: 0, oy: -42 },
+      { ox: 0, oy: 42 },
+    ];
+    for (const off of offsets) {
+      const tx = partnerPos.x + off.ox;
+      const ty = partnerPos.y + off.oy;
+      if (isPositionWalkable(tx, ty)) {
+        dispatch({
+          type: 'MOVE_PLAYER',
+          playerId: myOnlineRole,
+          dx: tx - myPos.x,
+          dy: ty - myPos.y,
+          facing: partnerPos.facing,
+        });
+        roomClientRef.current?.sendMove(
+          { x: tx, y: ty, facing: partnerPos.facing },
+          true
+        );
+        break;
+      }
+    }
+  }, [myOnlineRole, state.players]);
+
   const handleConfirmReset = async () => {
     setResetOpen(false);
     setOpenSpotId(null);
     pendingBlobsRef.current = { p1: null, p2: null };
+    pendingSyncOptionsRef.current = { forceReplace: true };
     await clearAllPersistedState();
     dispatch({ type: 'RESET_GAME' });
   };
 
-  const activePlayer = state.players[state.settings.activePlayer];
+  const controllingPlayerId: PlayerId =
+    playMode === 'online' ? myOnlineRole : state.settings.activePlayer;
+  const activePlayer = state.players[controllingPlayerId];
   const nearbySpot = getSpotById(state.nearbySpotId);
+  const partnerRole: PlayerId = myOnlineRole === 'p1' ? 'p2' : 'p1';
 
   return (
     <div
@@ -351,8 +633,33 @@ export function GameShell({
       {state.screen === 'setup' ? (
         <SetupScreen
           state={state}
+          playMode={playMode}
+          roomCode={roomCode}
+          myOnlineRole={myOnlineRole}
+          roomStatus={roomStatus}
+          roomError={roomError}
+          occupancy={occupancy}
           worldAssetStatus={worldAssetStatus}
           onRetryWorldAssets={handleRetryWorldAssets}
+          onChangePlayMode={(mode) => {
+            setPlayMode(mode);
+            if (mode === 'local') {
+              disconnectFromRoom();
+              dispatch({ type: 'SET_FOLLOW_PARTNER', enabled: true });
+            } else if (roomStatus === 'disconnected') {
+              connectToRoom(roomCode, myOnlineRole);
+            }
+          }}
+          onChangeRoomCode={setRoomCode}
+          onGenerateNewRoom={() => {
+            const fresh = generateInviteRoomCode();
+            setRoomCode(fresh);
+            if (playMode === 'online') {
+              connectToRoom(fresh, 'p1');
+            }
+          }}
+          onConnectOnlineRoom={connectToRoom}
+          onDisconnectOnlineRoom={disconnectFromRoom}
           onUpdateName={(playerId, name) =>
             dispatch({ type: 'UPDATE_PLAYER_NAME', playerId, name })
           }
@@ -370,13 +677,24 @@ export function GameShell({
           onSetReducedMotion={(mode) =>
             dispatch({ type: 'SET_REDUCED_MOTION', mode })
           }
-          onStartFestival={() => dispatch({ type: 'ENTER_WORLD' })}
+          onStartFestival={() => {
+            if (playMode === 'online' && roomStatus === 'disconnected') {
+              connectToRoom(roomCode, myOnlineRole);
+            }
+            dispatch({ type: 'ENTER_WORLD' });
+          }}
           onRequestReset={() => setResetOpen(true)}
         />
       ) : (
         <div className="world-layout">
           <FestivalHud
             state={state}
+            playMode={playMode}
+            roomCode={roomCode}
+            myOnlineRole={myOnlineRole}
+            roomStatus={roomStatus}
+            occupancy={occupancy}
+            cameraPreset={cameraPreset}
             reducedMotion={effectiveReducedMotion}
             onSetActivePlayer={(playerId) => {
               if (playerId !== state.settings.activePlayer) {
@@ -385,10 +703,22 @@ export function GameShell({
               dispatch({ type: 'SET_ACTIVE_PLAYER', playerId });
             }}
             onToggleFollow={() => dispatch({ type: 'TOGGLE_FOLLOW_PARTNER' })}
+            onCycleCameraPreset={() => {
+              const next = sceneRef.current?.cycleCameraPreset?.();
+              if (next) setCameraPreset(next);
+            }}
+            onResetCameraAngle={() => {
+              sceneRef.current?.resetCameraAngle?.();
+            }}
             onOpenSetup={() => {
               setOpenSpotId(null);
               dispatch({ type: 'OPEN_SETUP' });
             }}
+            onQuickSwitchOnline={() => {
+              connectToRoom(roomCode, 'p1');
+            }}
+            onSendEmote={handleSendEmote}
+            onWalkToPartner={handleWalkToPartner}
             onToggleSound={() => dispatch({ type: 'TOGGLE_SOUND' })}
             onToggleReducedMotion={() =>
               dispatch({
@@ -443,11 +773,12 @@ export function GameShell({
               ref={stageRef}
               className="phaser-stage"
               role="region"
-              aria-label="ฉากงานเทศกาลลอยกระทงแบบเดินสำรวจ 2 มิติ"
+              aria-label="ฉากงานเทศกาลลอยกระทงแบบเดินสำรวจ 3 มิติ"
             />
 
             <TouchControls
               activePlayerName={activePlayer.name}
+              playMode={playMode}
               nearbySpot={nearbySpot}
               onVectorChange={handleVectorChange}
               onNudgeStep={handleNudgeStep}
@@ -460,14 +791,32 @@ export function GameShell({
           <InteractionModal
             spotId={openSpotId}
             state={state}
+            playMode={playMode}
+            myOnlineRole={myOnlineRole}
+            partnerOnline={occupancy[partnerRole]}
+            lastPartnerSignal={lastPartnerSignal}
             reducedMotion={effectiveReducedMotion}
             onClose={() => setOpenSpotId(null)}
+            onSwitchLocalPlayer={(pid) =>
+              dispatch({ type: 'SET_ACTIVE_PLAYER', playerId: pid })
+            }
+            onRecordCoopHalf={(taskKey, playerId, halfScore) => {
+              dispatch({
+                type: 'RECORD_COOP_HALF',
+                taskKey,
+                playerId,
+                halfScore,
+              });
+            }}
+            onSendCoopSignal={(sid, action, val) => {
+              roomClientRef.current?.sendCoopSignal(sid, action, val);
+            }}
             onCollectMaterial={(material, message) => {
               playChime('pickup', state.settings.soundEnabled);
               dispatch({
                 type: 'COLLECT_MATERIAL',
                 material,
-                byPlayer: state.settings.activePlayer,
+                byPlayer: controllingPlayerId,
                 message,
               });
             }}
@@ -476,14 +825,14 @@ export function GameShell({
               dispatch({
                 type: 'LIGHT_LANTERN',
                 lanternId,
-                byPlayer: state.settings.activePlayer,
+                byPlayer: controllingPlayerId,
               });
             }}
             onBlessPavilion={() => {
               playChime('success', state.settings.soundEnabled);
               dispatch({
                 type: 'BLESS_PAVILION',
-                byPlayer: state.settings.activePlayer,
+                byPlayer: controllingPlayerId,
               });
             }}
             onCompleteMinigame={(gameId, passed, score) => {
@@ -493,12 +842,13 @@ export function GameShell({
                 gameId,
                 passed,
                 score,
-                byPlayer: state.settings.activePlayer,
+                byPlayer: controllingPlayerId,
               });
             }}
-            onResetMinigame={(gameId) =>
-              dispatch({ type: 'RESET_MINIGAME', gameId })
-            }
+            onResetMinigame={(gameId) => {
+              pendingSyncOptionsRef.current = { resetMinigame: gameId };
+              dispatch({ type: 'RESET_MINIGAME', gameId });
+            }}
             onUpdateKrathongDesign={(patch) =>
               dispatch({ type: 'UPDATE_KRATHONG_DESIGN', patch })
             }
@@ -506,34 +856,39 @@ export function GameShell({
               playChime('success', state.settings.soundEnabled);
               dispatch({
                 type: 'CRAFT_KRATHONG',
-                byPlayer: state.settings.activePlayer,
+                byPlayer: controllingPlayerId,
               });
             }}
             onReleaseKrathong={() => {
               playChime('ceremony', state.settings.soundEnabled);
               dispatch({
                 type: 'RELEASE_KRATHONG',
-                byPlayer: state.settings.activePlayer,
+                byPlayer: controllingPlayerId,
               });
             }}
-            onStartAnother={() => dispatch({ type: 'START_ANOTHER_KRATHONG' })}
+            onStartAnother={() => {
+              pendingSyncOptionsRef.current = { forceReplace: true };
+              dispatch({ type: 'START_ANOTHER_KRATHONG' });
+            }}
           />
         </div>
       )}
 
       <dialog
         ref={resetDialogRef}
+        {...({ closedby: 'closerequest' } as Record<string, string>)}
         className="festival-dialog festival-dialog--compact"
         aria-labelledby="reset-dialog-title"
+        onClose={() => setResetOpen(false)}
         onCancel={(e) => {
           e.preventDefault();
           setResetOpen(false);
         }}
       >
         <div className="festival-dialog__content">
-          <h2 id="reset-dialog-title" className="festival-dialog__title">
+          <h1 id="reset-dialog-title" className="festival-dialog__title">
             ยืนยันการรีเซ็ตข้อมูลทั้งหมด?
-          </h2>
+          </h1>
           <p className="festival-dialog__subtitle">
             ข้อมูลตัวละครทั้ง 2 คน รูปใบหน้าที่บันทึกไว้ในเครื่อง วัสดุ ผลมินิเกม และกระทงที่ลอยแล้วจะถูกล้างกลับเป็นค่าเริ่มต้น
           </p>

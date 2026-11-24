@@ -13,6 +13,7 @@ import type {
   PlayerId,
   PlayerPortrait,
   PlayerProfile,
+  SharedRoomQuestState,
 } from './types';
 import {
   LANTERN_SPOTS,
@@ -39,9 +40,9 @@ export const MATERIAL_LABELS: Record<MaterialId, { name: string; hint: string }>
 };
 
 export const MINIGAME_TITLES: Record<MinigameId, string> = {
-  recipe: 'ด่าน 1: คัดวัสดุตามสูตร',
-  assembly: 'ด่าน 2: ประกอบลำดับชั้นกระทง',
-  rhythm: 'ด่าน 3: ประดับแสงตามจังหวะ',
+  recipe: 'ด่าน 1: ช้อนคัดยอดวัสดุสายน้ำ',
+  assembly: 'ด่าน 2: วางชั้นกระทงตรงแกนทอง',
+  rhythm: 'ด่าน 3: ประดับแสงเทียนตามจังหวะ',
 };
 
 export function createEmptyPortrait(): PlayerPortrait {
@@ -114,10 +115,27 @@ export function createInitialGameState(): GameState {
     questStage: 'explore',
     minigames: createInitialMinigames(),
     krathongCrafted: false,
+    coopTasks: {},
     krathongDesign: createDefaultKrathongDesign(),
     releasedKrathongs: [],
     nearbySpotId: null,
     lastEventLog: 'ยินดีต้อนรับสู่คืนเพ็ญริมน้ำ ปรับแต่งตัวละครคู่รักแล้วออกสำรวจงานกันเลย',
+  };
+}
+
+export function extractSharedQuestState(state: GameState): SharedRoomQuestState {
+  return {
+    inventory: state.inventory,
+    litLanternIds: state.litLanternIds,
+    pavilionBlessed: state.pavilionBlessed,
+    contributedBy: state.contributedBy,
+    questStage: state.questStage,
+    minigames: state.minigames,
+    krathongCrafted: state.krathongCrafted,
+    coopTasks: state.coopTasks,
+    krathongDesign: state.krathongDesign,
+    releasedKrathongs: state.releasedKrathongs,
+    lastEventLog: state.lastEventLog,
   };
 }
 
@@ -381,7 +399,17 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         ),
         lastEventLog: !state.settings.followPartner
           ? 'เปิดโหมดเดินคู่กัน: อีกฝ่ายจะเดินเคียงข้างอัตโนมัติ'
-          : 'เปิดโหมดแยกเดินอิสระ (Pass-and-Play / Co-op 2 มือ)',
+          : 'เปิดโหมดแยกเดินอิสระ',
+      };
+
+    case 'SET_FOLLOW_PARTNER':
+      if (state.settings.followPartner === action.enabled) return state;
+      return {
+        ...state,
+        settings: {
+          ...state.settings,
+          followPartner: action.enabled,
+        },
       };
 
     case 'SET_REDUCED_MOTION':
@@ -453,6 +481,56 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         ...state,
         nearbySpotId: action.spotId,
       };
+
+    case 'RECORD_COOP_HALF': {
+      const prev = state.coopTasks[action.taskKey] ?? {
+        p1Done: false,
+        p2Done: false,
+        p1Score: 0,
+        p2Score: 0,
+        updatedAt: null,
+      };
+      const clamped = Math.max(0, Math.min(50, Math.round(action.halfScore)));
+      const nextEntry =
+        action.playerId === 'p1'
+          ? {
+              ...prev,
+              p1Done: true,
+              p1Score: Math.max(prev.p1Score, clamped),
+              updatedAt: new Date().toISOString(),
+            }
+          : {
+              ...prev,
+              p2Done: true,
+              p2Score: Math.max(prev.p2Score, clamped),
+              updatedAt: new Date().toISOString(),
+            };
+      const actorName = sanitizePlayerName(
+        state.players[action.playerId].name,
+        action.playerId === 'p1' ? 'ผู้เล่น 1' : 'ผู้เล่น 2'
+      );
+      const bothDone = nextEntry.p1Done && nextEntry.p2Done;
+      return {
+        ...state,
+        coopTasks: {
+          ...state.coopTasks,
+          [action.taskKey]: nextEntry,
+        },
+        lastEventLog: bothDone
+          ? `ทั้งคู่ช่วยกันผ่านภารกิจคู่รักสำเร็จแล้ว! กดรับรางวัลด้วยกันได้เลย`
+          : `${actorName} ทำส่วนของตัวเองสำเร็จแล้ว! รอคู่รักอีกฝ่ายมาช่วยต่อให้ครบ`,
+      };
+    }
+
+    case 'RESET_COOP_TASK': {
+      if (!state.coopTasks[action.taskKey]) return state;
+      const nextCoop = { ...state.coopTasks };
+      delete nextCoop[action.taskKey];
+      return {
+        ...state,
+        coopTasks: nextCoop,
+      };
+    }
 
     case 'COLLECT_MATERIAL': {
       const alreadyHas = state.inventory[action.material];
@@ -649,7 +727,11 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       };
     }
 
-    case 'START_ANOTHER_KRATHONG':
+    case 'START_ANOTHER_KRATHONG': {
+      const preservedCoop = { ...state.coopTasks };
+      delete preservedCoop['npc-bua'];
+      delete preservedCoop['gather-lotus'];
+      delete preservedCoop['npc-man'];
       return {
         ...state,
         inventory: {
@@ -659,9 +741,112 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         },
         minigames: createInitialMinigames(),
         krathongCrafted: false,
+        coopTasks: preservedCoop,
         questStage: 'explore',
         lastEventLog: 'เริ่มเก็บรวบรวมวัสดุและเล่นด่านประดิษฐ์สำหรับกระทงใบใหม่กันได้เลย',
       };
+    }
+
+    case 'APPLY_ONLINE_SNAPSHOT': {
+      const myRole = action.myRole;
+      const incomingMe = action.players[myRole];
+      const curMe = state.players[myRole];
+
+      const rawMyPos = action.preserveMyPosition
+        ? curMe.position
+        : incomingMe?.position ?? curMe.position;
+      const safeMyPos = isPositionWalkable(rawMyPos.x, rawMyPos.y)
+        ? rawMyPos
+        : { ...SPAWN_POSITIONS[myRole] };
+
+      const mergedMe: PlayerProfile = action.preserveMyProfile
+        ? {
+            ...curMe,
+            position: safeMyPos,
+          }
+        : {
+            ...(incomingMe ?? curMe),
+            position: safeMyPos,
+          };
+
+      const partnerRole: PlayerId = myRole === 'p1' ? 'p2' : 'p1';
+      const incomingPartner = action.players[partnerRole] ?? state.players[partnerRole];
+      const safePartnerPos = isPositionWalkable(
+        incomingPartner.position.x,
+        incomingPartner.position.y
+      )
+        ? incomingPartner.position
+        : { ...SPAWN_POSITIONS[partnerRole] };
+
+      const mergedPartner: PlayerProfile = {
+        ...incomingPartner,
+        position: safePartnerPos,
+      };
+
+      const nextPlayers: Record<PlayerId, PlayerProfile> =
+        myRole === 'p1'
+          ? { p1: mergedMe, p2: mergedPartner }
+          : { p1: mergedPartner, p2: mergedMe };
+
+      return {
+        ...state,
+        players: nextPlayers,
+        settings: {
+          ...state.settings,
+          activePlayer: myRole,
+        },
+        inventory: action.shared.inventory ?? state.inventory,
+        litLanternIds: Array.isArray(action.shared.litLanternIds)
+          ? action.shared.litLanternIds
+          : state.litLanternIds,
+        pavilionBlessed: Boolean(action.shared.pavilionBlessed),
+        contributedBy: action.shared.contributedBy ?? state.contributedBy,
+        questStage: action.shared.questStage ?? state.questStage,
+        minigames: action.shared.minigames ?? state.minigames,
+        krathongCrafted: Boolean(action.shared.krathongCrafted),
+        coopTasks: action.shared.coopTasks ?? {},
+        krathongDesign: action.shared.krathongDesign ?? state.krathongDesign,
+        releasedKrathongs: Array.isArray(action.shared.releasedKrathongs)
+          ? action.shared.releasedKrathongs
+          : state.releasedKrathongs,
+        nearbySpotId: computeActiveNearbySpotId(nextPlayers, myRole),
+        lastEventLog: action.shared.lastEventLog || state.lastEventLog,
+      };
+    }
+
+    case 'APPLY_PEER_MOVE': {
+      const target = state.players[action.playerId];
+      const nextPlayers: Record<PlayerId, PlayerProfile> = {
+        ...state.players,
+        [action.playerId]: {
+          ...target,
+          position: action.position,
+        },
+      };
+      return {
+        ...state,
+        players: nextPlayers,
+        nearbySpotId: computeActiveNearbySpotId(
+          nextPlayers,
+          state.settings.activePlayer
+        ),
+      };
+    }
+
+    case 'APPLY_PEER_PROFILE': {
+      const nextPlayers: Record<PlayerId, PlayerProfile> = {
+        ...state.players,
+        [action.playerId]: action.profile,
+      };
+      return {
+        ...state,
+        players: nextPlayers,
+        nearbySpotId: computeActiveNearbySpotId(
+          nextPlayers,
+          state.settings.activePlayer
+        ),
+      };
+    }
 
     case 'RESET_GAME':
       return createInitialGameState();

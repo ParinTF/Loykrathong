@@ -36,3 +36,8 @@ if (typeof HTMLDialogElement !== 'undefined') {
     this.removeAttribute('open');
   };
 }
+
+// Silence jsdom unimplemented 2D canvas console noise in unit tests
+if (typeof HTMLCanvasElement !== 'undefined') {
+  HTMLCanvasElement.prototype.getContext = (() => null) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+}

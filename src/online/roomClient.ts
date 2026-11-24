@@ -1,5 +1,7 @@
 import type {
+  CoopSignalEvent,
   CoupleEmoteEvent,
+  MinigameId,
   PlayerId,
   PlayerPosition,
   PlayerProfile,
@@ -34,6 +36,7 @@ export interface OnlineRoomCallbacks {
   onPeerMoved: (playerId: PlayerId, position: PlayerPosition) => void;
   onPeerProfile: (playerId: PlayerId, profile: PlayerProfile) => void;
   onEmote: (event: CoupleEmoteEvent) => void;
+  onCoopSignal?: (event: CoopSignalEvent) => void;
   onStatusChange: (status: RoomConnectionStatus, errorMessage: string | null) => void;
 }
 
@@ -192,6 +195,14 @@ export class OnlineRoomClient {
             text: msg.text,
             ts: msg.ts,
           });
+        } else if (msg.type === 'coop_signal') {
+          this.callbacks.onCoopSignal?.({
+            playerId: msg.playerId,
+            spotId: msg.spotId,
+            action: msg.action,
+            value: msg.value,
+            ts: msg.ts,
+          });
         } else if (msg.type === 'room_error') {
           this.intentionalClose = true;
           this.callbacks.onStatusChange('error', msg.message || 'เข้าห้องไม่สำเร็จ');
@@ -256,9 +267,35 @@ export class OnlineRoomClient {
     this.ws.send(JSON.stringify({ type: 'move', position }));
   }
 
-  public sendSharedState(shared: SharedRoomQuestState): void {
+  public sendSharedState(
+    shared: SharedRoomQuestState,
+    options?: {
+      forceReplace?: boolean;
+      resetTaskKey?: string;
+      resetMinigame?: MinigameId;
+    }
+  ): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'sync_shared', shared }));
+      this.ws.send(
+        JSON.stringify({
+          type: 'sync_shared',
+          shared,
+          ...options,
+        })
+      );
+    }
+  }
+
+  public sendCoopSignal(spotId: string, action: string, value = 0): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(
+        JSON.stringify({
+          type: 'coop_signal',
+          spotId,
+          action,
+          value,
+        })
+      );
     }
   }
 

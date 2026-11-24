@@ -1,18 +1,20 @@
+import type { Direction, PlayMode, WorldSpot } from '../domain/types';
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import type { Direction, WorldSpot } from '../domain/types';
 
 interface TouchControlsProps {
   activePlayerName: string;
+  playMode?: PlayMode;
   nearbySpot: WorldSpot | null;
   onVectorChange: (vx: number, vy: number) => void;
   onNudgeStep: (dx: number, dy: number, facing: Direction) => void;
   onInteract: () => void;
 }
 
-const JOYSTICK_RADIUS = 36;
+const JOYSTICK_RADIUS = 40;
 
 export function TouchControls({
   activePlayerName,
+  playMode = 'local',
   nearbySpot,
   onVectorChange,
   onNudgeStep,
@@ -48,6 +50,15 @@ export function TouchControls({
   };
 
   const handlePadDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const active = document.activeElement as HTMLElement | null;
+    if (
+      active &&
+      (active.tagName === 'INPUT' ||
+        active.tagName === 'TEXTAREA' ||
+        active.tagName === 'SELECT')
+    ) {
+      active.blur();
+    }
     pointerIdRef.current = e.pointerId;
     e.currentTarget.setPointerCapture?.(e.pointerId);
     updateFromPointer(e.clientX, e.clientY);
@@ -90,7 +101,12 @@ export function TouchControls({
           onPointerMove={handlePadMove}
           onPointerUp={resetStick}
           onPointerCancel={resetStick}
+          onLostPointerCapture={resetStick}
         >
+          <span className="joystick-compass joystick-compass--n" aria-hidden="true" />
+          <span className="joystick-compass joystick-compass--s" aria-hidden="true" />
+          <span className="joystick-compass joystick-compass--w" aria-hidden="true" />
+          <span className="joystick-compass joystick-compass--e" aria-hidden="true" />
           <div
             className="joystick-knob"
             style={{
@@ -157,12 +173,16 @@ export function TouchControls({
             setMobilePadMode((m) => (m === 'joystick' ? 'dpad' : 'joystick'))
           }
         >
-          {mobilePadMode === 'joystick' ? 'ปุ่มทิศทาง' : 'จอยสติ๊ก'}
+          {mobilePadMode === 'joystick' ? 'สลับเป็นปุ่มกด' : 'สลับเป็นจอยสติ๊ก'}
         </button>
       </div>
 
       <div className="touch-interact-cluster">
-        <p className="keyboard-hint">คีย์บอร์ด: WASD (P1) · ลูกศร (P2) · E โต้ตอบ</p>
+        <p className="keyboard-hint">
+          {playMode === 'online'
+            ? 'WASD/ลูกศร เดิน · ลากจอ/Q·R หมุนกล้อง 3D · V มุมกล้อง · E โต้ตอบ'
+            : 'WASD (P1) · ลูกศร (P2) · ลากจอ/Q·R หมุนกล้อง 3D · E โต้ตอบ'}
+        </p>
         <button
           type="button"
           className={`btn btn--interact ${nearbySpot ? 'is-ready' : ''}`}
