@@ -1,0 +1,74 @@
+.skill-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem;
+  align-items: center;
+  margin: .6rem 0;
+}
+
+.moon-pond--skill .pond-lotus svg { width: 24px; height: 24px; }
+.moon-pond--skill .pond-lotus.is-in-reach { color: #fae1a3; }
+.moon-pond--skill .pond-lotus:disabled:not(.is-collected) { opacity: .73; }
+.pond-boat--skill { width: 44px; }
+.pond-boat--skill > svg { display: block; width: 100%; filter: drop-shadow(0 2px 3px #061321); }
+
+.leaf-workboard__heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: .25rem .75rem;
+  color: #edddb9;
+  margin-block: .8rem .4rem;
+}
+
+.leaf-workboard__heading span, .skill-feedback { color: #cdc9ba; font-size: .84rem; }
+.skill-feedback { min-height: 1.5em; margin: .45rem 0; }
+.leaf-workboard {
+  position: relative;
+  isolation: isolate;
+  width: min(100%, 32rem);
+  aspect-ratio: 1.9;
+  margin: 0 auto;
+  overflow: hidden;
+  border: 1px solid #d4b47769;
+  border-radius: .85rem;
+  background: #10291e;
+}
+.leaf-workboard[data-editable="true"] { touch-action: none; user-select: none; cursor: crosshair; }
+.leaf-workboard > svg { position: absolute; width: 100%; height: 100%; pointer-events: none; }
+.leaf-workboard__leaf { fill: #28603c; stroke: #80a16d; stroke-width: 1; }
+.leaf-workboard__vein { fill: none; stroke: #91b578; stroke-width: .65; opacity: .6; }
+.leaf-workboard__guide { fill: none; stroke: #ecc580; stroke-width: 1.15; stroke-dasharray: 2.7 2.1; stroke-linecap: round; }
+.leaf-workboard__trace { fill: none; stroke: #fff0cd; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.leaf-workboard__target {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  transform: translate(-50%, -50%);
+  border: 1px solid #f5d692;
+  border-radius: 50%;
+  padding: 0;
+  background: #1c3527;
+  color: #fff0cd;
+  pointer-events: none;
+  font-size: .73rem;
+}
+.leaf-workboard__target[data-passed="true"] { background: #c6a762; color: #10231a; }
+.leaf-workboard__target:focus-visible { outline: 2px solid #fff4d6; outline-offset: 2px; }
+.finished-petals-tray .petal-badge svg { width: 17px; height: 17px; flex: 0 0 auto; }
+
+.lantern-heat-control { position: relative; display: grid; gap: .3rem; margin-top: .4rem; }
+.lantern-heat-control .field-label { display: flex; justify-content: space-between; align-items: center; gap: .6rem; }
+.lantern-heat-control__scale, .lantern-balance { display: block; overflow: hidden; border-radius: 5px; height: 6px; background: #344057; }
+.lantern-heat-control__scale { position: relative; }
+.lantern-heat-control__scale i { display: block; height: 100%; position: absolute; background: #d4b477; }
+.lantern-heat-control input { margin: .1rem 0; width: 100%; accent-color: #d4b477; cursor: pointer; }
+.lantern-heat-control[data-ready="true"] .field-label strong { color: #f5d692; }
+.lantern-balance { margin-block: .6rem; }
+.lantern-balance span { display: block; height: 100%; background: #f2c678; }
+.lantern-hold-button { touch-action: none; user-select: none; }
+.lantern-hold-button[aria-pressed="true"] { box-shadow: inset 0 0 0 2px #fff2c0; }
+.lantern-burner svg { width: 18px; height: 18px; color: #ffe0a8; }

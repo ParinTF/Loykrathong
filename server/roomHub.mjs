@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
+import { advanceLanternClock, applyActivitySkill, pauseLantern } from '../src/domain/activitySkills.mjs';
 
 const MAX_ROOMS = 400;
 const ROOM_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
@@ -125,6 +126,14 @@ function mergeSharedState(prev, incoming, options = {}) {
     return {
       ...createDefaultSharedState(),
       ...incoming,
+      lotusBoat: prev.lotusBoat,
+      leafRelay: prev.leafRelay,
+      skyLantern: prev.skyLantern,
+      inventory: {
+        ...incoming.inventory,
+        'banana-leaf': prev.inventory['banana-leaf'],
+        'lotus-blossom': prev.inventory['lotus-blossom'],
+      },
     };
   }
 
@@ -132,54 +141,18 @@ function mergeSharedState(prev, incoming, options = {}) {
 
   const nextInventory = {
     'banana-leaf': Boolean(
-      prev.inventory?.['banana-leaf'] || incoming.inventory?.['banana-leaf']
+      prev.inventory?.['banana-leaf']
     ),
     'lotus-blossom': Boolean(
-      prev.inventory?.['lotus-blossom'] || incoming.inventory?.['lotus-blossom']
+      prev.inventory?.['lotus-blossom']
     ),
     'candle-incense': Boolean(
       prev.inventory?.['candle-incense'] || incoming.inventory?.['candle-incense']
     ),
   };
 
-  // Activity 01: Boat Lotus Gathering
-  const prevBoat = prev.lotusBoat || createDefaultSharedState().lotusBoat;
-  const incBoat = incoming.lotusBoat || prevBoat;
-  const boatCollected = Array.from(
-    new Set([
-      ...(Array.isArray(prevBoat.collectedIds) ? prevBoat.collectedIds : []),
-      ...(Array.isArray(incBoat.collectedIds) ? incBoat.collectedIds : []),
-    ])
-  );
-  const nextLotusBoat = {
-    rower: incBoat.rower === 'p2' ? 'p2' : 'p1',
-    boatX: Number.isFinite(incBoat.boatX) ? incBoat.boatX : prevBoat.boatX,
-    boatY: Number.isFinite(incBoat.boatY) ? incBoat.boatY : prevBoat.boatY,
-    boatAngle: Number.isFinite(incBoat.boatAngle)
-      ? incBoat.boatAngle
-      : prevBoat.boatAngle,
-    collectedIds: boatCollected,
-    completed: Boolean(prevBoat.completed || incBoat.completed || boatCollected.length >= 5),
-  };
-
-  // Activity 02: Banana Leaf Relay
-  const prevLeaf = prev.leafRelay || createDefaultSharedState().leafRelay;
-  const incLeaf = incoming.leafRelay || prevLeaf;
-  const finishedPetals = Array.from(
-    new Set([
-      ...(Array.isArray(prevLeaf.finishedPetals) ? prevLeaf.finishedPetals : []),
-      ...(Array.isArray(incLeaf.finishedPetals) ? incLeaf.finishedPetals : []),
-    ])
-  );
-  const nextLeafRelay = {
-    cutter: incLeaf.cutter === 'p2' ? 'p2' : 'p1',
-    cutStep: Number.isFinite(incLeaf.cutStep) ? incLeaf.cutStep : prevLeaf.cutStep,
-    currentShape: incLeaf.currentShape || prevLeaf.currentShape,
-    passedLeafReady: Boolean(incLeaf.passedLeafReady),
-    foldStep: Number.isFinite(incLeaf.foldStep) ? incLeaf.foldStep : prevLeaf.foldStep,
-    finishedPetals,
-    completed: Boolean(prevLeaf.completed || incLeaf.completed || finishedPetals.length >= 3),
-  };
+  const nextLotusBoat = prev.lotusBoat;
+  const nextLeafRelay = prev.leafRelay;
 
   // Activity 03: Blind Fortune Paper Q&A (conflict-free concurrent p1/p2 merge)
   const prevFp = prev.fortunePaper || createDefaultSharedState().fortunePaper;
@@ -236,24 +209,11 @@ function mergeSharedState(prev, incoming, options = {}) {
   const prevLantern = prev.skyLantern || createDefaultSharedState().skyLantern;
   const incLantern = incoming.skyLantern || prevLantern;
   const nextSkyLantern = {
-    p1Wish:
-      senderRole === 'p2'
-        ? prevLantern.p1Wish
-        : typeof incLantern.p1Wish === 'string'
-          ? incLantern.p1Wish.slice(0, 110)
-          : prevLantern.p1Wish,
-    p2Wish:
-      senderRole === 'p1'
-        ? prevLantern.p2Wish
-        : typeof incLantern.p2Wish === 'string'
-          ? incLantern.p2Wish.slice(0, 110)
-          : prevLantern.p2Wish,
-    p1Lit: Boolean(prevLantern.p1Lit || incLantern.p1Lit),
-    p2Lit: Boolean(prevLantern.p2Lit || incLantern.p2Lit),
-    p1ReadyRelease: Boolean(prevLantern.p1ReadyRelease || incLantern.p1ReadyRelease),
-    p2ReadyRelease: Boolean(prevLantern.p2ReadyRelease || incLantern.p2ReadyRelease),
-    released: Boolean(prevLantern.released || incLantern.released),
-    releasedAt: prevLantern.releasedAt || incLantern.releasedAt || null,
+    ...prevLantern,
+    p1Wish: senderRole === 'p1' && !prevLantern.p1Grip && !prevLantern.p1ReadyRelease && !prevLantern.released
+      && typeof incLantern.p1Wish === 'string' ? incLantern.p1Wish.slice(0, 110) : prevLantern.p1Wish,
+    p2Wish: senderRole === 'p2' && !prevLantern.p2Grip && !prevLantern.p2ReadyRelease && !prevLantern.released
+      && typeof incLantern.p2Wish === 'string' ? incLantern.p2Wish.slice(0, 110) : prevLantern.p2Wish,
   };
 
   // Activity 07: Photo Memories (append-union by id, keep compact thumbnails safely bounded)
@@ -522,7 +482,7 @@ export function createRoomHub() {
       return true;
     }
 
-    if (room.seatKeys.p2 && room.sockets.p2 && room.sockets.p2.readyState === 1) {
+    if (room.seatKeys.p2) {
       reply(409, {
         error: {
           code: 'room_full',
@@ -537,6 +497,28 @@ export function createRoomHub() {
       hostName: room.players.p1.name,
     });
     return true;
+  }
+
+  function clearLanternTimer(room) {
+    clearTimeout(room.lanternTimer);
+    room.lanternTimer = undefined;
+  }
+
+  function scheduleLantern(room) {
+    clearLanternTimer(room);
+    const deadline = room.shared.skyLantern.warmUntil ?? room.shared.skyLantern.liftAt;
+    if (deadline == null) return;
+    room.lanternTimer = setTimeout(() => {
+      room.lanternTimer = undefined;
+      const { p1, p2 } = getOccupancy(room);
+      if (!p1 || !p2) return;
+      const next = advanceLanternClock(room.shared, Date.now());
+      if (next !== room.shared) {
+        room.shared = next;
+        broadcastRoomSnapshot(room);
+      }
+    }, Math.max(1, deadline - Date.now()));
+    room.lanternTimer.unref();
   }
 
   function attachToServer(httpServer) {
@@ -634,16 +616,13 @@ export function createRoomHub() {
             return;
           }
 
-          if (room.sockets[role] && room.sockets[role] !== ws && room.sockets[role].readyState === 1) {
-            sendJson(ws, {
-              type: 'room_error',
-              code: 'seat_busy',
-              message: 'กำลังสลับการเชื่อมต่อจากหน้าต่างเดิม…',
-            });
-            return;
-          }
-
+          const previous = room.sockets[role];
           room.sockets[role] = ws;
+          if (previous && previous !== ws && previous.readyState === 1) {
+            clearLanternTimer(room);
+            room.shared = pauseLantern(room.shared);
+            previous.close(4001, 'seat moved');
+          }
           joinedRoom = room;
           assignedRole = role;
           room.updatedAt = Date.now();
@@ -699,9 +678,6 @@ export function createRoomHub() {
           } else if (!room.seatKeys.p2) {
             role = 'p2';
             room.seatKeys.p2 = seatKey;
-          } else if (!room.sockets.p2 || room.sockets.p2.readyState !== 1) {
-            role = 'p2';
-            room.seatKeys.p2 = seatKey;
           }
 
           if (!role) {
@@ -750,7 +726,7 @@ export function createRoomHub() {
           return;
         }
 
-        if (!joinedRoom || !assignedRole) return;
+        if (!joinedRoom || !assignedRole || joinedRoom.sockets[assignedRole] !== ws) return;
 
         if (msg.type === 'update_profile' && msg.profile) {
           const prevPos = joinedRoom.players[assignedRole].position;
@@ -794,6 +770,21 @@ export function createRoomHub() {
             playerId: assignedRole,
             position: nextPos,
           });
+          return;
+        }
+
+        if (msg.type === 'activity_skill') {
+          const { p1, p2 } = getOccupancy(joinedRoom);
+          if (!p1 || !p2 || joinedRoom.sockets[assignedRole] !== ws) return;
+          const now = Date.now();
+          const current = advanceLanternClock(joinedRoom.shared, now);
+          const next = applyActivitySkill(current, assignedRole, msg.command, now);
+          if (next !== joinedRoom.shared) {
+            const previousLantern = joinedRoom.shared.skyLantern;
+            joinedRoom.shared = next;
+            if (previousLantern !== next.skyLantern) scheduleLantern(joinedRoom);
+            broadcastRoomSnapshot(joinedRoom);
+          }
           return;
         }
 
@@ -872,6 +863,9 @@ export function createRoomHub() {
                 ? msg.sessionId.slice(0, 64)
                 : `pb-${Date.now()}`,
             layout: msg.layout === 'strip-4' ? 'strip-4' : 'polaroid',
+            frameTheme: msg.layout === 'strip-4' && [
+              'moonlight-romance', 'ivory-memories', 'love-letter', 'golden-festival',
+            ].includes(msg.frameTheme) ? msg.frameTheme : undefined,
             backdrop:
               typeof msg.backdrop === 'string' ? msg.backdrop.slice(0, 24) : 'sala',
             pose: typeof msg.pose === 'string' ? msg.pose.slice(0, 24) : 'heart-hands',
@@ -934,6 +928,8 @@ export function createRoomHub() {
         if (!joinedRoom || !assignedRole) return;
         if (joinedRoom.sockets[assignedRole] === ws) {
           joinedRoom.sockets[assignedRole] = null;
+          clearLanternTimer(joinedRoom);
+          joinedRoom.shared = pauseLantern(joinedRoom.shared);
           const leftName = joinedRoom.players[assignedRole]?.name || assignedRole;
           broadcastRoomSnapshot(
             joinedRoom,

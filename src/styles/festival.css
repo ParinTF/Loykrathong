@@ -1,5 +1,41 @@
 @layer reset, base, components;
 
+@font-face {
+  font-family: Mali;
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/mali-500-thai.woff2") format("woff2");
+  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+
+@font-face {
+  font-family: Mali;
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/mali-500-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+0304, U+0308, U+0329, U+2000-206F, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Noto Serif Thai";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/notoserifthai-500-thai.woff2") format("woff2");
+  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+
+@font-face {
+  font-family: "Noto Serif Thai";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/notoserifthai-500-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+0304, U+0308, U+0329, U+2000-206F, U+FEFF, U+FFFD;
+}
+
 @layer reset {
   html {
     box-sizing: border-box;
@@ -2774,15 +2810,90 @@
 
   .booth-shutter-row { justify-content: center; }
 
+  .booth-intro {
+    margin: 0;
+    color: #d5c8b5;
+    font-size: .88rem;
+    line-height: 1.6;
+  }
+
+  .booth-frame-picker {
+    margin: 0;
+    padding: 0;
+    min-inline-size: 0;
+    border: 0;
+  }
+
+  .booth-frame-picker legend {
+    margin-block-end: .55rem;
+  }
+
+  .booth-frame-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 7.4rem), 1fr));
+    gap: .45rem;
+  }
+
+  .booth-frame-option {
+    position: relative;
+    cursor: pointer;
+    min-inline-size: 0;
+  }
+
+  .booth-frame-option input {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    clip-path: inset(50%);
+    overflow: hidden;
+  }
+
+  .booth-frame-option__face {
+    min-block-size: 4.75rem;
+    padding: .48rem .52rem;
+    background: #151e32;
+    color: #e5d9c5;
+    border: 1px solid #374054;
+    border-radius: .65rem;
+    display: flex;
+    align-items: center;
+    gap: .48rem;
+    font: .84rem/1.15 Georgia, serif;
+    transition: background-color 180ms ease, border-color 180ms ease;
+  }
+
+  .booth-frame-option__face canvas {
+    display: block;
+    flex: none;
+    inline-size: 1.38rem;
+    block-size: auto;
+    box-shadow: 0 2px 7px #030a175e;
+  }
+
+  .booth-frame-option:hover .booth-frame-option__face {
+    border-color: #b3905c;
+  }
+
+  .booth-frame-option input:checked + .booth-frame-option__face {
+    background: #283249;
+    border-color: #d4b477;
+    color: #fff1d9;
+  }
+
+  .booth-frame-option input:focus-visible + .booth-frame-option__face {
+    outline: 2px solid #f4e9d4;
+    outline-offset: 2px;
+  }
+
   .booth-result-card {
-    padding: 0.85rem;
+    padding: .85rem;
     border-radius: 0.95rem;
-    background: rgba(12, 20, 40, 0.9);
-    border: 1.5px solid #FDE68A;
+    background: #101728;
+    border: 1px solid #353a4b;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.65rem;
+    gap: 1rem;
   }
 
   .booth-result-card__head {
@@ -2792,8 +2903,14 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
-    color: #FDE68A;
-    font-size: 0.9rem;
+    color: #f4e9d4;
+    font-size: .95rem;
+  }
+
+  .booth-result-card__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .45rem;
   }
 
   .booth-result-card__img {
@@ -2805,7 +2922,8 @@
   }
 
   .booth-result-card__img.is-strip {
-    max-block-size: 30rem;
+    max-block-size: min(36rem, 72svh);
+    border-radius: 0;
   }
 
   .booth-options-grid {

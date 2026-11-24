@@ -4,6 +4,7 @@ import { GameShell } from './components/GameShell';
 import './styles/festival.css';
 import './styles/festival-hud.css';
 import './styles/invitation.css';
+import './styles/festival-skills.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

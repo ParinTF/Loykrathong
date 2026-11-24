@@ -1,3 +1,4 @@
+import type { ActivitySkillCommand } from '../domain/activitySkills.mjs';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   DEFAULT_PRESET_BY_GENDER,
@@ -10,14 +11,12 @@ import {
 import type {
   CoopSignalEvent,
   CoupleEmoteEvent,
-  CouplePoseId,
   Direction,
   GameState,
   GenderId,
-  PhotoBackdropId,
   PhotoBoothEvent,
   PhotoBoothFilterId,
-  PhotoBoothLayoutId,
+  PhotoBoothShutter,
   PlayerId,
   PlayerProfile,
 } from '../domain/types';
@@ -826,13 +825,7 @@ export function GameShell({
   }, []);
 
   const handleSendPhotoShutter = useCallback(
-    (payload: {
-      sessionId: string;
-      layout: PhotoBoothLayoutId;
-      backdrop: PhotoBackdropId;
-      pose: CouplePoseId;
-      caption: string;
-    }) => {
+    (payload: PhotoBoothShutter) => {
       roomClientRef.current?.sendPhotoBoothShutter(payload);
     },
     []
@@ -845,7 +838,11 @@ export function GameShell({
     []
   );
 
-  const bothOnline = occupancy.p1 && occupancy.p2;
+  const handleActivitySkill = useCallback((command: ActivitySkillCommand) => {
+    roomClientRef.current?.sendActivitySkill(command);
+  }, []);
+
+  const bothOnline = roomStatus === 'connected' && occupancy.p1 && occupancy.p2;
   const activePlayer = state.players[state.myRole];
   const nearbySpot = getSpotById(state.nearbySpotId);
 
@@ -1066,21 +1063,7 @@ export function GameShell({
             onSendPhotoCamState={handleSendPhotoCamState}
             onSendPhotoShutter={handleSendPhotoShutter}
             onSendPhotoSnap={handleSendPhotoSnap}
-            onUpdateLotusBoat={(patch) =>
-              dispatch({ type: 'UPDATE_LOTUS_BOAT', patch })
-            }
-            onPickBoatLotus={(lotusId, byPlayer) =>
-              dispatch({ type: 'PICK_BOAT_LOTUS', lotusId, byPlayer })
-            }
-            onUpdateLeafRelay={(patch) =>
-              dispatch({ type: 'UPDATE_LEAF_RELAY', patch })
-            }
-            onAdvanceLeafCut={(byPlayer) =>
-              dispatch({ type: 'ADVANCE_LEAF_CUT', byPlayer })
-            }
-            onAdvanceLeafFold={(byPlayer) =>
-              dispatch({ type: 'ADVANCE_LEAF_FOLD', byPlayer })
-            }
+            onActivitySkill={handleActivitySkill}
             onSetFortunePrompt={(promptIndex) =>
               dispatch({ type: 'SET_FORTUNE_PROMPT', promptIndex })
             }
@@ -1095,15 +1078,6 @@ export function GameShell({
             }
             onSetLanternWish={(playerId, wish) =>
               dispatch({ type: 'SET_LANTERN_WISH', playerId, wish })
-            }
-            onLightLanternSide={(playerId) =>
-              dispatch({ type: 'LIGHT_LANTERN_SIDE', playerId })
-            }
-            onReadyReleaseLantern={(playerId) =>
-              dispatch({ type: 'READY_RELEASE_LANTERN', playerId })
-            }
-            onCompleteLanternRelease={() =>
-              dispatch({ type: 'COMPLETE_LANTERN_RELEASE' })
             }
             onUpdateKrathongDesign={(patch) =>
               dispatch({ type: 'UPDATE_KRATHONG_DESIGN', patch })
@@ -1126,7 +1100,7 @@ export function GameShell({
             onSetCouplePose={(pose) =>
               dispatch({ type: 'SET_COUPLE_POSE', pose })
             }
-            onSavePhotoMemory={(pose, backdrop, caption, layout, compositeDataUrl) =>
+            onSavePhotoMemory={(pose, backdrop, caption, layout, compositeDataUrl, frameTheme) =>
               dispatch({
                 type: 'SAVE_PHOTO_MEMORY',
                 pose,
@@ -1134,6 +1108,7 @@ export function GameShell({
                 caption,
                 layout,
                 compositeDataUrl,
+                frameTheme,
               })
             }
             onTogglePierReady={(playerId, ready) =>

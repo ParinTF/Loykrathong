@@ -1,379 +1,132 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { BOAT_LOTUS_TARGETS } from '../../domain/reducer';
-import type {
-  CoopSignalEvent,
-  LotusBoatState,
-  PlayerId,
-  PlayerProfile,
-} from '../../domain/types';
+import { useEffect, useRef } from 'react';
+import { BOAT_LOTUS_TARGETS, canReachLotus, type ActivitySkillCommand } from '../../domain/activitySkills.mjs';
+import type { LotusBoatState, PlayerId, PlayerProfile } from '../../domain/types';
 import { playChime } from '../../game/sound';
+import { HudIcon } from '../hud/HudPrimitives';
 
 interface LotusBoatActivityProps {
   boat: LotusBoatState;
   players: Record<PlayerId, PlayerProfile>;
   myRole: PlayerId;
   bothOnline: boolean;
-  lastSignal: CoopSignalEvent | null;
   reducedMotion: boolean;
   soundEnabled: boolean;
-  onUpdateBoat: (patch: Partial<LotusBoatState>) => void;
-  onPickLotus: (lotusId: string, byPlayer: PlayerId) => void;
-  onSendSignal?: (
-    spotId: string,
-    action: string,
-    value?: number,
-    x?: number,
-    y?: number
-  ) => void;
+  onCommand: (command: ActivitySkillCommand) => void;
 }
 
-const FIREFLIES = [
-  { x: 14, y: 22, delay: '0s' },
-  { x: 38, y: 16, delay: '1.1s' },
-  { x: 64, y: 24, delay: '2.2s' },
-  { x: 84, y: 44, delay: '0.6s' },
-  { x: 76, y: 78, delay: '1.7s' },
-  { x: 46, y: 82, delay: '2.6s' },
-  { x: 18, y: 68, delay: '0.9s' },
-  { x: 52, y: 48, delay: '1.9s' },
-];
-
-const PICK_RADIUS = 19;
+const FIREFLIES = [[14,22], [38,16], [64,24], [84,44], [76,78], [46,82], [18,68], [52,48]];
+const ROW_DIRECTION: Record<string, number> = {
+  arrowright: 0, d: 0, arrowdown: 90, s: 90, arrowleft: 180, a: 180, arrowup: 270, w: 270,
+};
 
 export function LotusBoatActivity({
-  boat,
-  players,
-  myRole,
-  bothOnline,
-  lastSignal,
-  reducedMotion,
-  soundEnabled,
-  onUpdateBoat,
-  onPickLotus,
-  onSendSignal,
+  boat, players, myRole, bothOnline, reducedMotion, soundEnabled, onCommand,
 }: LotusBoatActivityProps) {
-  const [soloRoleView, setSoloRoleView] = useState<PlayerId>(myRole);
-  const effectiveActor: PlayerId = bothOnline ? myRole : soloRoleView;
+  const pond = useRef<HTMLDivElement>(null);
+  const isRower = boat.rower === myRole;
+  const pickerRole = boat.rower === 'p1' ? 'p2' : 'p1';
+  const canRow = bothOnline && isRower;
+  const targetsInRange = BOAT_LOTUS_TARGETS.filter((flower) =>
+    !boat.collectedIds.includes(flower.id) && canReachLotus(boat, flower));
+  const closeWithoutAlignment = BOAT_LOTUS_TARGETS.some((flower) =>
+    !boat.collectedIds.includes(flower.id) && Math.hypot(flower.x - boat.boatX, flower.y - boat.boatY) <= 12);
 
-  const isRower = boat.rower === effectiveActor;
-  const pickerRole: PlayerId = boat.rower === 'p1' ? 'p2' : 'p1';
-  const isPicker = !isRower;
-
-  const [livePos, setLivePos] = useState({
-    x: boat.boatX,
-    y: boat.boatY,
-    angle: boat.boatAngle,
-  });
-  const [announcement, setAnnouncement] = useState(
-    'ล่องเรือชมหิ่งห้อยอย่างสบายใจ ไม่มีเวลานับถอยหลัง'
-  );
-  const lastBroadcastRef = useRef(0);
-  const pondRef = useRef<HTMLDivElement>(null);
-
-  // Keep local smooth boat position in sync with shared state
   useEffect(() => {
-    setLivePos({ x: boat.boatX, y: boat.boatY, angle: boat.boatAngle });
-  }, [boat.boatX, boat.boatY, boat.boatAngle]);
-
-  // Smooth real-time partner steering signal
-  useEffect(() => {
-    if (
-      lastSignal &&
-      lastSignal.spotId === 'gather-lotus' &&
-      lastSignal.action === 'boat-pos' &&
-      lastSignal.playerId !== myRole &&
-      typeof lastSignal.x === 'number' &&
-      typeof lastSignal.y === 'number'
-    ) {
-      setLivePos({
-        x: lastSignal.x,
-        y: lastSignal.y,
-        angle: lastSignal.value ?? 0,
-      });
-    }
-  }, [lastSignal, myRole]);
-
-  const steerTo = useCallback(
-    (nextX: number, nextY: number) => {
-      const clampedX = Math.max(8, Math.min(92, Math.round(nextX * 10) / 10));
-      const clampedY = Math.max(14, Math.min(86, Math.round(nextY * 10) / 10));
-      const dx = clampedX - livePos.x;
-      const dy = clampedY - livePos.y;
-      const angle =
-        Math.hypot(dx, dy) > 0.3
-          ? Math.round((Math.atan2(dy, dx) * 180) / Math.PI)
-          : livePos.angle;
-      setLivePos({ x: clampedX, y: clampedY, angle });
-
-      const now = performance.now();
-      if (now - lastBroadcastRef.current >= 90) {
-        lastBroadcastRef.current = now;
-        onSendSignal?.('gather-lotus', 'boat-pos', angle, clampedX, clampedY);
-      }
-      onUpdateBoat({ boatX: clampedX, boatY: clampedY, boatAngle: angle });
-    },
-    [livePos.angle, livePos.x, livePos.y, onSendSignal, onUpdateBoat]
-  );
-
-  const paddleDelta = useCallback(
-    (dx: number, dy: number) => {
-      if (!isRower) return;
-      playChime('beat', soundEnabled);
-      steerTo(livePos.x + dx, livePos.y + dy);
-    },
-    [isRower, livePos.x, livePos.y, soundEnabled, steerTo]
-  );
-
-  // Allow keyboard rowing when focused inside the modal
-  useEffect(() => {
-    if (!isRower) return undefined;
-    const onKeyDown = (event: KeyboardEvent) => {
-      const tag = (document.activeElement?.tagName || '').toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
-      if (event.key === 'ArrowUp' || event.key === 'w' || event.key === 'W') {
-        event.preventDefault();
-        paddleDelta(0, -8);
-      } else if (event.key === 'ArrowDown' || event.key === 's' || event.key === 'S') {
-        event.preventDefault();
-        paddleDelta(0, 8);
-      } else if (event.key === 'ArrowLeft' || event.key === 'a' || event.key === 'A') {
-        event.preventDefault();
-        paddleDelta(-9, 0);
-      } else if (event.key === 'ArrowRight' || event.key === 'd' || event.key === 'D') {
-        event.preventDefault();
-        paddleDelta(9, 0);
-      }
+    if (!canRow) return;
+    const keyStroke = (event: KeyboardEvent) => {
+      if (event.repeat || (event.target instanceof Element && event.target.closest('input,textarea,select'))) return;
+      const angle = ROW_DIRECTION[event.key.toLowerCase()];
+      if (angle === undefined) return;
+      event.preventDefault();
+      onCommand({ type: 'boat-stroke', angle });
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isRower, paddleDelta]);
+    window.addEventListener('keydown', keyStroke);
+    return () => window.removeEventListener('keydown', keyStroke);
+  }, [canRow, onCommand]);
 
-  const nearbyUncollected = BOAT_LOTUS_TARGETS.filter((t) => {
-    if (boat.collectedIds.includes(t.id)) return false;
-    return Math.hypot(t.x - livePos.x, t.y - livePos.y) <= PICK_RADIUS;
-  });
-
-  const handlePick = (lotusId: string, label: string) => {
-    if (!isPicker) {
-      setAnnouncement('สลับหน้าที่เป็นคนเก็บดอกบัว หรือชวนคู่รักแตะเก็บบัวข้างเรือได้เลย');
-      return;
-    }
-    playChime('pickup', soundEnabled);
-    onPickLotus(lotusId, effectiveActor);
-    setAnnouncement(`เก็บ${label}ขึ้นเรือเรียบร้อยแล้ว`);
-  };
-
-  const handleSwapRoles = () => {
-    const nextRower: PlayerId = boat.rower === 'p1' ? 'p2' : 'p1';
+  function stroke(angle: number) {
     playChime('beat', soundEnabled);
-    onUpdateBoat({ rower: nextRower });
-    setAnnouncement(
-      `สลับหน้าที่แล้ว! ตอนนี้ ${players[nextRower].name} พายเรือ และ ${players[boat.rower].name} เก็บดอกบัว`
-    );
-  };
-
-  const handlePondClick = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (!isRower || !pondRef.current) return;
-    if ((event.target as HTMLElement).closest('button')) return;
-    const rect = pondRef.current.getBoundingClientRect();
-    const pctX = ((event.clientX - rect.left) / rect.width) * 100;
-    const pctY = ((event.clientY - rect.top) / rect.height) * 100;
-    playChime('beat', soundEnabled);
-    steerTo(pctX, pctY);
-  };
-
-  const rowerName = players[boat.rower].name;
-  const pickerName = players[pickerRole].name;
+    onCommand({ type: 'boat-stroke', angle });
+  }
 
   return (
-    <section
-      className="romantic-activity lotus-boat-activity"
-      aria-label="พายเรือเก็บดอกบัวด้วยกัน"
-    >
+    <section className="romantic-activity lotus-boat-activity" aria-label="พายเรือเก็บดอกบัวด้วยกัน">
       <div className="activity-role-bar">
-        <div className="role-pill role-pill--rower">
-          <span>🚣 คนพายเรือ:</span>
-          <strong>{rowerName}</strong>
-        </div>
-        <div className="role-pill role-pill--picker">
-          <span>🪷 คนเก็บดอกบัว:</span>
-          <strong>{pickerName}</strong>
-        </div>
-        <button
-          type="button"
-          className="btn btn--secondary btn--sm"
-          onClick={handleSwapRoles}
-        >
-          ⇄ สลับหน้าที่กัน
-        </button>
+        <div className="role-pill role-pill--rower"><span>คนพายเรือ:</span><strong>{players[boat.rower].name}</strong></div>
+        <div className="role-pill role-pill--picker"><span>คนเก็บดอกบัว:</span><strong>{players[pickerRole].name}</strong></div>
+        <button type="button" className="btn btn--secondary btn--sm" disabled={!canRow}
+          onClick={() => onCommand({ type: 'boat-swap' })}>ส่งไม้พายให้อีกคน</button>
       </div>
-
-      {!bothOnline && (
-        <div className="solo-preview-bar" role="group" aria-label="สลับฝั่งเล่นระหว่างรอคู่รัก">
-          <span>กำลังรอแฟนเข้าห้อง · ลองสลับฝั่งเล่นดูได้:</span>
-          <div className="solo-preview-bar__actions">
-            {(['p1', 'p2'] as const).map((pid) => (
-              <button
-                key={pid}
-                type="button"
-                className={`btn btn--sm ${soloRoleView === pid ? 'btn--primary' : 'btn--secondary'}`}
-                aria-pressed={soloRoleView === pid}
-                onClick={() => setSoloRoleView(pid)}
-              >
-                มุมมอง {players[pid].name} ({boat.rower === pid ? 'พายเรือ' : 'เก็บบัว'})
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       <p className="activity-gentle-note">
         {isRower
-          ? 'คุณคือคนพายเรือ — แตะบนผิวน้ำ กดปุ่มทิศทาง หรือใช้ลูกศรพาเรือเข้าใกล้ดอกบัวชมพูให้คนรักเก็บ'
-          : 'คุณคือคนเก็บดอกบัว — รอเรือล่องเข้าใกล้ดอกบัวที่ส่องประกายแล้วแตะเก็บขึ้นเรือไปด้วยกัน'}
+          ? 'แตะผิวน้ำเพื่อหันทิศ แล้วกดพายทีละจังหวะ จอดให้ดอกบัวอยู่ข้างลำเรือ'
+          : 'บอกคนพายให้หันด้านข้างเข้าหาดอกบัว เมื่อดอกบัวขึ้นขอบทองจึงเอื้อมเก็บได้'}
       </p>
-
+      {!bothOnline && <p className="status-badge" role="status">รอให้อีกคนออนไลน์ก่อนลงเรือ</p>}
       <div
-        ref={pondRef}
-        className={`moon-pond ${isRower ? 'moon-pond--steerable' : ''}`}
-        data-reduced-motion={reducedMotion ? 'true' : 'false'}
-        onClick={handlePondClick}
-      >
+        ref={pond}
+        className="moon-pond moon-pond--skill"
+        data-reduced-motion={reducedMotion}
+        onClick={(event) => {
+          if (!canRow || !pond.current || !(event.target instanceof Element) || event.target.closest('button')) return;
+          const box = pond.current.getBoundingClientRect();
+          if (!box.width || !box.height) return;
+          const x = (event.clientX - box.left) * 100 / box.width;
+          const y = (event.clientY - box.top) * 100 / box.height;
+          if (Math.hypot(x - boat.boatX, y - boat.boatY) < 2) return;
+          onCommand({ type: 'boat-aim', angle: Math.atan2(y - boat.boatY, x - boat.boatX) * 180 / Math.PI });
+        }}>
         <div className="moon-pond__moon" aria-hidden="true" />
-
-        {FIREFLIES.map((ff, idx) => (
-          <span
-            key={idx}
-            className="moon-pond__firefly"
-            style={{ left: `${ff.x}%`, top: `${ff.y}%`, animationDelay: ff.delay }}
-            aria-hidden="true"
-          />
+        {FIREFLIES.map(([x,y], index) => (
+          <span key={index} className="moon-pond__firefly" style={{ left: x + '%', top: y + '%', animationDelay: (index * -.42) + 's' }} aria-hidden="true" />
         ))}
-
-        {BOAT_LOTUS_TARGETS.map((lotus) => {
-          const collected = boat.collectedIds.includes(lotus.id);
-          const dist = Math.hypot(lotus.x - livePos.x, lotus.y - livePos.y);
-          const inReach = !collected && dist <= PICK_RADIUS;
+        {BOAT_LOTUS_TARGETS.map((flower) => {
+          const collected = boat.collectedIds.includes(flower.id);
+          const aligned = !collected && canReachLotus(boat, flower);
           return (
-            <button
-              key={lotus.id}
-              type="button"
-              className={`pond-lotus ${collected ? 'is-collected' : ''} ${inReach ? 'is-in-reach' : ''}`}
-              style={{ left: `${lotus.x}%`, top: `${lotus.y}%` }}
-              disabled={collected || !inReach || !isPicker}
-              aria-label={
-                collected
-                  ? `${lotus.label} เก็บแล้ว`
-                  : inReach
-                    ? `เก็บ${lotus.label}`
-                    : `${lotus.label} (พายเรือเข้ามาใกล้อีกนิด)`
-              }
-              onClick={() => handlePick(lotus.id, lotus.label)}
-            >
-              <span aria-hidden="true">{collected ? '✨' : '🪷'}</span>
-              {inReach && isPicker && (
-                <span className="pond-lotus__tag">แตะเก็บ!</span>
-              )}
+            <button key={flower.id} type="button" className={'pond-lotus' + (collected ? ' is-collected' : aligned ? ' is-in-reach' : '')}
+              style={{ left: flower.x + '%', top: flower.y + '%' }}
+              aria-label={collected ? flower.label + ' เก็บแล้ว' : 'เก็บ' + flower.label}
+              disabled={!bothOnline || isRower || !aligned}
+              onClick={() => {
+                playChime('pickup', soundEnabled);
+                onCommand({ type: 'boat-pick', id: flower.id });
+              }}>
+              <HudIcon name={collected ? 'check' : 'lotus'} />
             </button>
           );
         })}
-
-        <div
-          className="pond-boat"
-          style={{
-            left: `${livePos.x}%`,
-            top: `${livePos.y}%`,
-            transform: `translate(-50%, -50%) rotate(${livePos.angle}deg)`,
-          }}
-          aria-hidden="true"
-        >
-          <span className="pond-boat__hull">🛶</span>
-          <span className="pond-boat__glow" />
+        <div className="pond-boat pond-boat--skill"
+          style={{ left: boat.boatX + '%', top: boat.boatY + '%', transform: 'translate(-50%, -50%) rotate(' + boat.boatAngle + 'deg)' }}
+          aria-hidden="true">
+          <svg viewBox="0 0 76 38">
+            <path d="M5 19C18 5 48 4 70 19C50 34 18 33 5 19Z" fill="#79503b" stroke="#e1bc7c" strokeWidth="2"/>
+            <path d="M12 19h49M29 9v20m16-20v20M67 19h7" fill="none" stroke="#ead3a3" strokeWidth="2"/>
+            <path d="M32 4h12m-12 30h12" stroke="#f0d49a" strokeWidth="2" strokeLinecap="round"/>
+          </svg>
         </div>
       </div>
-
-      <div className="boat-controls-row">
+      <div className="skill-action-row" role="group" aria-label={isRower ? 'ควบคุมเรือ' : 'เก็บดอกบัว'}>
         {isRower ? (
-          <div className="boat-paddle-pad" role="group" aria-label="ปุ่มพายเรือ">
-            <button
-              type="button"
-              className="btn btn--secondary btn--sm"
-              onClick={() => paddleDelta(0, -10)}
-            >
-              ↑ พายขึ้น
-            </button>
-            <div className="boat-paddle-pad__mid">
-              <button
-                type="button"
-                className="btn btn--secondary btn--sm"
-                onClick={() => paddleDelta(-11, 0)}
-              >
-                ← ซ้าย
-              </button>
-              <button
-                type="button"
-                className="btn btn--secondary btn--sm"
-                onClick={() => paddleDelta(11, 0)}
-              >
-                ขวา →
-              </button>
-            </div>
-            <button
-              type="button"
-              className="btn btn--secondary btn--sm"
-              onClick={() => paddleDelta(0, 10)}
-            >
-              ↓ พายลง
-            </button>
-          </div>
-        ) : (
-          <div className="picker-action-box">
-            {nearbyUncollected.length > 0 ? (
-              <button
-                type="button"
-                className="btn btn--primary"
-                onClick={() =>
-                  handlePick(nearbyUncollected[0].id, nearbyUncollected[0].label)
-                }
-              >
-                🪷 เก็บ{nearbyUncollected[0].label}ขึ้นเรือ
-              </button>
-            ) : (
-              <p className="status-badge">
-                รอ {rowerName} พายเรือเข้าใกล้ดอกบัวชมพู (สามารถส่งสัญญาณบอกทางกันได้!)
-              </p>
-            )}
-          </div>
-        )}
-
-        <div className="boat-basket">
-          <span className="boat-basket__label">ตะกร้าดอกบัวบนเรือ</span>
-          <div className="boat-basket__icons" aria-label={`เก็บแล้ว ${boat.collectedIds.length} จาก ${BOAT_LOTUS_TARGETS.length} ดอก`}>
-            {BOAT_LOTUS_TARGETS.map((lotus) => (
-              <span
-                key={lotus.id}
-                className={
-                  boat.collectedIds.includes(lotus.id)
-                    ? 'basket-bloom is-filled'
-                    : 'basket-bloom'
-                }
-              >
-                🪷
-              </span>
+          <>
+            {[['พายเหนือ',270], ['พายซ้าย',180], ['พายขวา',0], ['พายใต้',90]].map(([label, angle]) => (
+              <button key={label} type="button" className="btn btn--secondary btn--sm" disabled={!canRow}
+                onClick={() => stroke(Number(angle))}>{label}</button>
             ))}
-          </div>
-        </div>
+            <button type="button" className="btn btn--primary btn--sm" disabled={!canRow} onClick={() => stroke(boat.boatAngle)}>
+              พายตามหัวเรือ
+            </button>
+          </>
+        ) : (
+          <p className="status-badge" role="status">
+            {targetsInRange.length ? 'เก็บดอกบัวที่ขึ้นขอบทองได้เลย'
+              : closeWithoutAlignment ? 'อยู่ใกล้แล้ว ลองหันด้านข้างเรือเข้าหาดอกบัว'
+                : 'รอเรือเข้าใกล้ดอกบัว'}
+          </p>
+        )}
       </div>
-
-      {boat.completed && (
-        <div className="romantic-reward-banner" role="status">
-          🌸 ทั้งคู่พายเรือเก็บบัวชมพูครบแล้ว! ได้รับ <strong>ดอกบัวชมพูจากสระหิ่งห้อย</strong> — ยังสามารถล่องเรือชมหิ่งห้อยด้วยกันต่อได้ตามสบายเลย
-        </div>
-      )}
-
-      <p className="visually-hidden" aria-live="polite">
-        {announcement}
-      </p>
+      <p className="status-badge" role="status">เก็บดอกบัวแล้ว {boat.collectedIds.length}/{BOAT_LOTUS_TARGETS.length} ดอก</p>
+      {boat.completed && <p className="romantic-reward-banner">เก็บดอกบัวครบแล้ว ได้รับดอกบัวชมพูจากสระหิ่งห้อย</p>}
     </section>
   );
 }

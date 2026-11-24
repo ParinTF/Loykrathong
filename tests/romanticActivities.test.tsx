@@ -3,42 +3,36 @@ import { useReducer } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { InteractionModal } from '../src/components/InteractionModal';
 import { ScenicPhotoActivity } from '../src/components/activities/ScenicPhotoActivity';
+import * as photoBoothCanvas from '../src/components/activities/photoBoothCanvas';
 import { createInitialGameState, gameReducer } from '../src/domain/reducer';
-import type { PhotoBoothEvent } from '../src/domain/types';
+import { applyActivitySkill, type ActivitySkillCommand } from '../src/domain/activitySkills.mjs';
+import type { GameAction, GameState, PhotoBoothEvent, PlayerId } from '../src/domain/types';
 
 function ActivityHarness({
   spotId,
   bothOnline = false,
+  actor = 'p1',
   lastPhotoEvent = null,
 }: {
   spotId: string;
   bothOnline?: boolean;
+  actor?: PlayerId;
   lastPhotoEvent?: PhotoBoothEvent | null;
 }) {
-  const [state, dispatch] = useReducer(gameReducer, undefined, () =>
-    gameReducer(createInitialGameState(), { type: 'ENTER_WORLD' })
-  );
+  const [state, dispatch] = useReducer((current: GameState, action: GameAction | { type: 'TEST_SKILL'; command: ActivitySkillCommand }) =>
+    action.type === 'TEST_SKILL' ? applyActivitySkill(current, actor, action.command, Date.now()) : gameReducer(current, action),
+    undefined, () => gameReducer(createInitialGameState(), { type: 'ENTER_WORLD' }));
 
   return (
     <InteractionModal
       spotId={spotId}
       state={state}
-      myOnlineRole="p1"
+      myOnlineRole={actor}
       bothOnline={bothOnline}
       lastPhotoEvent={lastPhotoEvent}
       reducedMotion={true}
       onClose={() => {}}
-      onUpdateLotusBoat={(patch) => dispatch({ type: 'UPDATE_LOTUS_BOAT', patch })}
-      onPickBoatLotus={(lotusId, byPlayer) =>
-        dispatch({ type: 'PICK_BOAT_LOTUS', lotusId, byPlayer })
-      }
-      onUpdateLeafRelay={(patch) => dispatch({ type: 'UPDATE_LEAF_RELAY', patch })}
-      onAdvanceLeafCut={(byPlayer) =>
-        dispatch({ type: 'ADVANCE_LEAF_CUT', byPlayer })
-      }
-      onAdvanceLeafFold={(byPlayer) =>
-        dispatch({ type: 'ADVANCE_LEAF_FOLD', byPlayer })
-      }
+      onActivitySkill={(command) => dispatch({ type: 'TEST_SKILL', command })}
       onSetFortunePrompt={(promptIndex) =>
         dispatch({ type: 'SET_FORTUNE_PROMPT', promptIndex })
       }
@@ -51,15 +45,6 @@ function ActivityHarness({
       onResetFortuneRound={() => dispatch({ type: 'RESET_FORTUNE_ROUND' })}
       onSetLanternWish={(playerId, wish) =>
         dispatch({ type: 'SET_LANTERN_WISH', playerId, wish })
-      }
-      onLightLanternSide={(playerId) =>
-        dispatch({ type: 'LIGHT_LANTERN_SIDE', playerId })
-      }
-      onReadyReleaseLantern={(playerId) =>
-        dispatch({ type: 'READY_RELEASE_LANTERN', playerId })
-      }
-      onCompleteLanternRelease={() =>
-        dispatch({ type: 'COMPLETE_LANTERN_RELEASE' })
       }
       onUpdateKrathongDesign={(patch) =>
         dispatch({ type: 'UPDATE_KRATHONG_DESIGN', patch })
@@ -80,7 +65,7 @@ function ActivityHarness({
         dispatch({ type: 'CRAFT_KRATHONG', byPlayer })
       }
       onSetCouplePose={(pose) => dispatch({ type: 'SET_COUPLE_POSE', pose })}
-      onSavePhotoMemory={(pose, backdrop, caption, layout, compositeDataUrl) =>
+      onSavePhotoMemory={(pose, backdrop, caption, layout, compositeDataUrl, frameTheme) =>
         dispatch({
           type: 'SAVE_PHOTO_MEMORY',
           pose,
@@ -88,6 +73,7 @@ function ActivityHarness({
           caption,
           layout,
           compositeDataUrl,
+          frameTheme,
         })
       }
       onTogglePierReady={(playerId, ready) =>
@@ -106,28 +92,37 @@ function ActivityHarness({
 }
 
 describe('Redesigned Romantic Co-op Activities UI (01–08)', () => {
-  it('01 & 02: supports role swapping in boat lotus gathering and real-time cut -> fold leaf relay with zero timers', () => {
-    const { unmount } = render(<ActivityHarness spotId="gather-lotus" />);
-    expect(screen.getByText(/คนพายเรือ:/i)).toBeInTheDocument();
-    expect(screen.getByText(/คนเก็บดอกบัว:/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /สลับหน้าที่กัน/i }));
+  it('01 and 02 keep cooperation by role and reject repeated activation of one trace point', () => {
+    const boat = render(<ActivityHarness spotId="gather-lotus" bothOnline />);
+    expect(screen.getByText('คนพายเรือ:')).toBeInTheDocument();
+    expect(screen.getByText('คนเก็บดอกบัว:')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'ส่งไม้พายให้อีกคน' }));
+    expect(screen.getByText('รอเรือเข้าใกล้ดอกบัว')).toBeInTheDocument();
     expect(screen.queryByText(/วินาที/)).toBeNull();
-    unmount();
+    boat.unmount();
 
-    render(<ActivityHarness spotId="npc-bua" />);
-    // Cutter cuts 3 times -> passes leaf to folder
-    const cutBtn = screen.getByRole('button', { name: /เจียนโคนใบ/i });
-    fireEvent.click(cutBtn);
-    fireEvent.click(screen.getByRole('button', { name: /ตัดแต่งแนวเส้นกลางใบ/i }));
-    fireEvent.click(screen.getByRole('button', { name: /เล็มปลายกลีบ/i }));
-    expect(screen.getByText(/ส่งใบตองที่เจียนแล้วข้ามไปให้/i)).toBeInTheDocument();
-
-    // Switch preview to P2 folder and fold 3 steps
-    fireEvent.click(screen.getByRole('button', { name: /มุมมอง ต้นกล้า/i }));
-    fireEvent.click(screen.getByRole('button', { name: /ลากพับมุมซ้าย/i }));
-    fireEvent.click(screen.getByRole('button', { name: /ลากพับมุมขวา/i }));
-    fireEvent.click(screen.getByRole('button', { name: /กลัดไม้กลัด/i }));
-    expect(screen.getByText(/กลีบหงส์อ่อนช้อย/)).toBeInTheDocument();
+    const leaf = render(<ActivityHarness spotId="npc-bua" bothOnline />);
+    const firstPoint = screen.getByRole('button', { name: 'จุด 1 ของรอยเจียนที่ 1' });
+    fireEvent.click(firstPoint);
+    fireEvent.click(firstPoint);
+    fireEvent.click(firstPoint);
+    expect(screen.getByText('เจียนใบตอง · แนว 1/3')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'จุด 2 ของรอยเจียนที่ 1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'จุด 3 ของรอยเจียนที่ 1' }));
+    for (const step of [2, 3]) {
+      for (const point of [1, 2, 3]) {
+        fireEvent.click(screen.getByRole('button', { name: 'จุด ' + point + ' ของรอยเจียนที่ ' + step }));
+      }
+    }
+    expect(screen.getByRole('button', { name: 'จุด 1 ของรอยพับที่ 1' })).toBeDisabled();
+    leaf.rerender(<ActivityHarness spotId="npc-bua" bothOnline actor="p2" />);
+    expect(screen.getByRole('button', { name: 'จุด 1 ของรอยพับที่ 1' })).toBeEnabled();
+    for (const step of [1, 2, 3]) {
+      for (const point of [1, 2, 3]) {
+        fireEvent.click(screen.getByRole('button', { name: 'จุด ' + point + ' ของรอยพับที่ ' + step }));
+      }
+    }
+    expect(screen.getByText('กลีบหงส์อ่อนช้อย').closest('.petal-badge')).toHaveClass('is-done');
   });
 
   it('03: hides each partner answer in Blind Fortune Paper until both seal, then reveals simultaneously and gifts candles', () => {
@@ -153,18 +148,21 @@ describe('Redesigned Romantic Co-op Activities UI (01–08)', () => {
   });
 
   it('04, 06, 07, 08: allows meaningful sky lantern, shared krathong studio with keyboard nudging, online couple photo booth, and score-free keepsake card', async () => {
-    // 04: Single Sky Lantern
-    const r4 = render(<ActivityHarness spotId="lantern-sky" />);
+    const r4 = render(<ActivityHarness spotId="lantern-sky" bothOnline />);
     fireEvent.change(screen.getByLabelText(/คำอธิษฐานของ ฟ้าใส/i), {
       target: { value: 'ขอให้จับมือกันตลอดไป' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /ช่วยประคองและจุดไฟโคม/i }));
-    fireEvent.click(screen.getByRole('button', { name: /ฝั่ง ต้นกล้า/i }));
-    fireEvent.click(screen.getByRole('button', { name: /ช่วยประคองและจุดไฟโคม/i }));
-    fireEvent.click(screen.getByRole('button', { name: /นับถอยหลังปล่อยโคมพร้อมกัน/i }));
-    fireEvent.click(screen.getByRole('button', { name: /ฝั่ง ฟ้าใส/i }));
-    fireEvent.click(screen.getByRole('button', { name: /นับถอยหลังปล่อยโคมพร้อมกัน/i }));
-    expect(screen.getByText(/ลอยสว่างขึ้นสู่ท้องฟ้าในฉาก 3 มิติแล้ว/i)).toBeInTheDocument();
+    const hold = screen.getByRole('button', { name: 'กดค้างเพื่อประคองไฟ' });
+    expect(hold).toBeDisabled();
+    fireEvent.change(screen.getByRole('slider'), { target: { value: '50' } });
+    expect(hold).toBeEnabled();
+    fireEvent.click(hold);
+    expect(hold).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.keyDown(hold, { key: ' ' });
+    expect(hold).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.keyUp(hold, { key: ' ' });
+    expect(hold).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByRole('button', { name: 'เตรียมปล่อยโคมพร้อมกัน' })).toBeNull();
     r4.unmount();
 
     // 06: Shared Krathong Studio (immediate access, no prerequisites, keyboard nudging)
@@ -177,7 +175,15 @@ describe('Redesigned Romantic Co-op Activities UI (01–08)', () => {
     expect(screen.getByText(/บันทึกกระทงของเราแล้ว/i)).toBeInTheDocument();
     r6.unmount();
 
-    // 07: Online Couple Photo Booth (renders live partner stream frame, toggles 4-cut/polaroid, runs 3-2-1 shutter countdown & saves memory)
+    // 07: jsdom cannot render the WebGL portrait or PNG. Check the shutter's composition request.
+    const compose = vi.spyOn(photoBoothCanvas, 'renderCouplePhotoBoothComposite').mockResolvedValue({
+      png: new Blob(['fixture'], { type: 'image/png' }),
+      compactJpegDataUrl: 'data:image/jpeg;base64,ZmFrZQ==',
+    });
+    vi.stubGlobal('URL', class extends URL {
+      static createObjectURL() { return 'blob:strip-test'; }
+      static revokeObjectURL() {}
+    });
     vi.useFakeTimers();
     try {
       const r7 = render(
@@ -201,19 +207,29 @@ describe('Redesigned Romantic Co-op Activities UI (01–08)', () => {
         screen.getByAltText(/ภาพกล้องสดของ ต้นกล้า/i)
       ).toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: /กอดอุ่น/i }));
+      fireEvent.click(screen.getByRole('button', { name: 'โฟโต้บูธ 4 ช็อต' }));
+      fireEvent.click(screen.getByRole('radio', { name: 'Love Letter' }));
       fireEvent.click(
-        screen.getByRole('button', { name: /นับถอยหลังถ่ายรูปคู่พร้อมกัน/i })
+        screen.getByRole('button', { name: /นับถอยหลังถ่ายโฟโต้บูธ 4 ช็อตพร้อมกัน/i })
       );
       expect(screen.getByText(/ยิ้มและจัดท่าพร้อมกันเลย/i)).toBeInTheDocument();
 
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(2500);
+        await vi.advanceTimersByTimeAsync(12_000);
       });
 
+      expect(compose).toHaveBeenCalledWith(expect.objectContaining({
+        layout: 'strip-4',
+        frameTheme: 'love-letter',
+        shots: Array.from({ length: 4 }, () => ({ p1DataUrl: null, p2DataUrl: null })),
+      }));
+      expect(screen.getByRole('img', { name: 'ภาพคู่สี่ช็อต' })).toHaveAttribute('src', 'blob:strip-test');
       expect(screen.getByText(/อัลบั้มภาพคืนนี้ของเรา \(1 ภาพ\)/i)).toBeInTheDocument();
       r7.unmount();
     } finally {
       vi.useRealTimers();
+      vi.unstubAllGlobals();
+      compose.mockRestore();
     }
 
     // 08: Pier Synchronized Release -> Score-Free Keepsake Card

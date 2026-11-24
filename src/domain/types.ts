@@ -139,12 +139,17 @@ export interface SkyLanternState {
   p2ReadyRelease: boolean;
   released: boolean;
   releasedAt: string | null;
+  p1Grip?: boolean;
+  p2Grip?: boolean;
+  warmUntil?: number | null;
+  liftAt?: number | null;
 }
 
 // --- Activity 07: Scenic Viewpoint & Couple Photo Booth ---
 export type CouplePoseId = 'sit-moon' | 'hold-hands' | 'warm-hug' | 'heart-hands';
 export type PhotoBackdropId = 'sala' | 'yipeng' | 'river' | 'cream-minimal';
 export type PhotoBoothLayoutId = 'polaroid' | 'strip-4';
+export type PhotoStripThemeId = 'moonlight-romance' | 'ivory-memories' | 'love-letter' | 'golden-festival';
 export type PhotoBoothFilterId = 'natural' | 'warm-candle' | 'moonlight-film' | 'classic-bw';
 
 export interface CouplePhotoMemory {
@@ -152,10 +157,20 @@ export interface CouplePhotoMemory {
   pose: CouplePoseId;
   backdrop: PhotoBackdropId;
   layout?: PhotoBoothLayoutId;
+  frameTheme?: PhotoStripThemeId;
   caption: string;
   coupleNames: [string, string];
   takenAt: string;
   compositeDataUrl?: string | null;
+}
+
+export interface PhotoBoothShutter {
+  sessionId: string;
+  layout: PhotoBoothLayoutId;
+  frameTheme?: PhotoStripThemeId;
+  backdrop: PhotoBackdropId;
+  pose: CouplePoseId;
+  caption: string;
 }
 
 export type PhotoBoothEvent =
@@ -173,16 +188,11 @@ export type PhotoBoothEvent =
       active: boolean;
       ts: number;
     }
-  | {
+  | (PhotoBoothShutter & {
       type: 'photobooth_shutter';
       playerId: PlayerId;
-      sessionId: string;
-      layout: PhotoBoothLayoutId;
-      backdrop: PhotoBackdropId;
-      pose: CouplePoseId;
-      caption: string;
       ts: number;
-    }
+    })
   | {
       type: 'photobooth_snap';
       playerId: PlayerId;
@@ -345,13 +355,6 @@ export type GameAction =
       facing?: Direction;
     }
   | { type: 'SET_NEARBY_SPOT'; spotId: string | null }
-  // Activity 01: Lotus Boat
-  | { type: 'UPDATE_LOTUS_BOAT'; patch: Partial<LotusBoatState> }
-  | { type: 'PICK_BOAT_LOTUS'; lotusId: string; byPlayer: PlayerId }
-  // Activity 02: Banana Leaf Relay
-  | { type: 'UPDATE_LEAF_RELAY'; patch: Partial<LeafRelayState> }
-  | { type: 'ADVANCE_LEAF_CUT'; byPlayer: PlayerId }
-  | { type: 'ADVANCE_LEAF_FOLD'; byPlayer: PlayerId }
   // Activity 03: Blind Fortune Paper
   | { type: 'SET_FORTUNE_PROMPT'; promptIndex: number }
   | { type: 'SET_FORTUNE_ANSWER'; playerId: PlayerId; answer: string }
@@ -359,9 +362,6 @@ export type GameAction =
   | { type: 'RESET_FORTUNE_ROUND'; promptIndex?: number }
   // Activity 04: Single Sky Lantern
   | { type: 'SET_LANTERN_WISH'; playerId: PlayerId; wish: string }
-  | { type: 'LIGHT_LANTERN_SIDE'; playerId: PlayerId }
-  | { type: 'READY_RELEASE_LANTERN'; playerId: PlayerId }
-  | { type: 'COMPLETE_LANTERN_RELEASE'; timestamp?: string }
   // Activity 06: Shared Krathong Studio
   | { type: 'UPDATE_KRATHONG_DESIGN'; patch: Partial<KrathongDesign> }
   | { type: 'ADD_KRATHONG_DECORATION'; item: KrathongDecorationItem }
@@ -376,6 +376,7 @@ export type GameAction =
       pose: CouplePoseId;
       backdrop: PhotoBackdropId;
       layout?: PhotoBoothLayoutId;
+      frameTheme?: PhotoStripThemeId;
       caption: string;
       compositeDataUrl?: string | null;
       timestamp?: string;

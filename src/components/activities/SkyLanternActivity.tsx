@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
-import type {
-  PlayerId,
-  PlayerProfile,
-  SkyLanternState,
-} from '../../domain/types';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  isLanternHeatReady, LANTERN_COUNTDOWN_MS, LANTERN_HEAT, LANTERN_HOLD_MS, type ActivitySkillCommand,
+} from '../../domain/activitySkills.mjs';
+import type { PlayerId, PlayerProfile, SkyLanternState } from '../../domain/types';
 import { playChime } from '../../game/sound';
+import { HudIcon } from '../hud/HudPrimitives';
 
 interface SkyLanternActivityProps {
   lantern: SkyLanternState;
@@ -14,208 +14,171 @@ interface SkyLanternActivityProps {
   reducedMotion: boolean;
   soundEnabled: boolean;
   onSetWish: (playerId: PlayerId, wish: string) => void;
-  onLightSide: (playerId: PlayerId) => void;
-  onReadyRelease: (playerId: PlayerId) => void;
-  onCompleteRelease: () => void;
+  onCommand: (command: ActivitySkillCommand) => void;
+}
+
+function isHoldKey(key: string) {
+  return key === ' ' || key === 'Enter';
 }
 
 export function SkyLanternActivity({
-  lantern,
-  players,
-  myRole,
-  bothOnline,
-  reducedMotion,
-  soundEnabled,
-  onSetWish,
-  onLightSide,
-  onReadyRelease,
-  onCompleteRelease,
+  lantern, players, myRole, bothOnline, reducedMotion, soundEnabled, onSetWish, onCommand,
 }: SkyLanternActivityProps) {
-  const [soloRoleView, setSoloRoleView] = useState<PlayerId>(myRole);
-  const activeActor: PlayerId = bothOnline ? myRole : soloRoleView;
-  const [countdown, setCountdown] = useState<number | null>(null);
-
+  const [heat, setHeat] = useState(25);
+  const [now, setNow] = useState(Date.now);
+  const holding = useRef(false);
+  const latestCommand = useRef(onCommand);
   const bothLit = lantern.p1Lit && lantern.p2Lit;
-  const bothReady = lantern.p1ReadyRelease && lantern.p2ReadyRelease;
+  const deadline = lantern.warmUntil ?? lantern.liftAt;
+  const wasLit = useRef(bothLit);
+  const wasReleased = useRef(lantern.released);
+  const myWish = myRole === 'p1' ? lantern.p1Wish : lantern.p2Wish;
+  const myGrip = myRole === 'p1' ? lantern.p1Grip : lantern.p2Grip;
+  const myReady = myRole === 'p1' ? lantern.p1ReadyRelease : lantern.p2ReadyRelease;
+  const [heatMin, heatMax] = LANTERN_HEAT[myRole];
+  const heatReady = isLanternHeatReady(myRole, heat);
+  const canGrip = bothOnline && myWish.trim().length > 0 && heatReady && !bothLit;
+  const canReady = bothOnline && !myReady && Boolean(lantern.p1Wish.trim() && lantern.p2Wish.trim());
 
-  // Trigger synchronized heartfelt 3-2-1 release once both partners press ready
   useEffect(() => {
-    if (!bothReady || lantern.released) {
-      setCountdown(null);
-      return undefined;
+    if (deadline == null) return;
+    function refresh() { setNow(Date.now()); }
+    refresh();
+    const timer = window.setInterval(refresh, reducedMotion ? 240 : 80);
+    return () => window.clearInterval(timer);
+  }, [deadline, reducedMotion]);
+
+  useEffect(() => {
+    if (bothLit && !wasLit.current) playChime('lantern', soundEnabled);
+    if (lantern.released && !wasReleased.current) playChime('ceremony', soundEnabled);
+    wasLit.current = bothLit;
+    wasReleased.current = lantern.released;
+  }, [bothLit, lantern.released, soundEnabled]);
+
+  useEffect(() => {
+    latestCommand.current = onCommand;
+  }, [onCommand]);
+
+  useEffect(() => {
+    function stopHolding() {
+      if (!holding.current) return;
+      holding.current = false;
+      latestCommand.current({ type: 'lantern-grip', held: false });
     }
-
-    if (reducedMotion) {
-      playChime('ceremony', soundEnabled);
-      onCompleteRelease();
-      return undefined;
-    }
-
-    setCountdown(3);
-    playChime('beat', soundEnabled);
-    const t1 = window.setTimeout(() => {
-      setCountdown(2);
-      playChime('beat', soundEnabled);
-    }, 850);
-    const t2 = window.setTimeout(() => {
-      setCountdown(1);
-      playChime('beat', soundEnabled);
-    }, 1700);
-    const t3 = window.setTimeout(() => {
-      setCountdown(0);
-      playChime('lantern', soundEnabled);
-      onCompleteRelease();
-    }, 2550);
-
+    const onVisibility = () => { if (document.hidden) stopHolding(); };
+    window.addEventListener('blur', stopHolding);
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
-      window.clearTimeout(t1);
-      window.clearTimeout(t2);
-      window.clearTimeout(t3);
+      window.removeEventListener('blur', stopHolding);
+      document.removeEventListener('visibilitychange', onVisibility);
+      stopHolding();
     };
-  }, [bothReady, lantern.released, onCompleteRelease, reducedMotion, soundEnabled]);
+  }, []);
 
-  const myWish = activeActor === 'p1' ? lantern.p1Wish : lantern.p2Wish;
-  const myLit = activeActor === 'p1' ? lantern.p1Lit : lantern.p2Lit;
-  const myReady =
-    activeActor === 'p1' ? lantern.p1ReadyRelease : lantern.p2ReadyRelease;
+  function beginHold() {
+    if (!canGrip || holding.current) return;
+    holding.current = true;
+    onCommand({ type: 'lantern-grip', held: true, heat });
+  }
+
+  function stopHold() {
+    if (!holding.current) return;
+    holding.current = false;
+    onCommand({ type: 'lantern-grip', held: false });
+  }
+
+  function pressHold(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (event.button !== 0) return;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    beginHold();
+  }
+
+  const warmProgress = lantern.warmUntil != null
+    ? Math.max(0, Math.min(100, 100 * (1 - (lantern.warmUntil - now) / LANTERN_HOLD_MS)))
+    : 0;
+  const remaining = lantern.liftAt != null
+    ? Math.max(1, Math.min(LANTERN_COUNTDOWN_MS / 1000, Math.ceil((lantern.liftAt - now) / 1000)))
+    : null;
 
   return (
-    <section
-      className="romantic-activity sky-lantern-activity"
-      aria-label="ส่งความปรารถนาขึ้นสู่ท้องฟ้า"
-    >
-      <div className="dialogue-bubble">
-        <p>
-          โคมยี่เป็งดวงพิเศษเพียงดวงเดียวของคืนนี้ — เขียนคำอธิษฐานของแต่ละคนลงบนผิวโคม
-          ช่วยกันประคองและจุดไฟ แล้วนับถอยหลังปล่อยขึ้นสู่ฟ้าพร้อมกัน
-        </p>
-      </div>
-
-      {!bothOnline && !lantern.released && (
-        <div className="solo-preview-bar" role="group" aria-label="สลับฝั่งโคมระหว่างรอคู่รัก">
-          <span>กำลังรอแฟนเข้าห้อง · สลับฝั่งเขียนคำอธิษฐานและประคองโคมได้:</span>
-          <div className="solo-preview-bar__actions">
-            {(['p1', 'p2'] as const).map((pid) => (
-              <button
-                key={pid}
-                type="button"
-                className={`btn btn--sm ${soloRoleView === pid ? 'btn--primary' : 'btn--secondary'}`}
-                aria-pressed={soloRoleView === pid}
-                onClick={() => setSoloRoleView(pid)}
-              >
-                ฝั่ง {players[pid].name}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Visual Illuminated Sky Lantern */}
-      <div
-        className={`lantern-ritual-stage ${bothLit ? 'is-lit' : ''} ${lantern.released ? 'is-released' : ''}`}
-      >
+    <section className="romantic-activity sky-lantern-activity" aria-label="ส่งความปรารถนาขึ้นสู่ท้องฟ้า">
+      <p className="activity-gentle-note">
+        เขียนคำอธิษฐานคนละหนึ่งข้อ ตั้งระดับไฟในเขตทองของตัวเอง แล้วค้างประคองพร้อมกัน 1.8 วินาที
+      </p>
+      {!bothOnline && !lantern.released && <p className="status-badge" role="status">รอให้อีกคนออนไลน์ก่อนจุดโคม</p>}
+      <div className={'lantern-ritual-stage' + (bothLit ? ' is-lit' : '') + (lantern.released ? ' is-released' : '')}>
         <div className="lantern-body">
           <div className="lantern-body__panel">
             <span className="lantern-body__author">{players.p1.name}</span>
-            <p className="lantern-body__wish">
-              {lantern.p1Wish.trim() || 'รอเขียนคำอธิษฐาน…'}
-            </p>
+            <p className="lantern-body__wish">{lantern.p1Wish.trim() || 'รอเขียนคำอธิษฐาน'}</p>
           </div>
           <div className="lantern-body__divider" aria-hidden="true" />
           <div className="lantern-body__panel">
             <span className="lantern-body__author">{players.p2.name}</span>
-            <p className="lantern-body__wish">
-              {lantern.p2Wish.trim() || 'รอเขียนคำอธิษฐาน…'}
-            </p>
+            <p className="lantern-body__wish">{lantern.p2Wish.trim() || 'รอเขียนคำอธิษฐาน'}</p>
           </div>
         </div>
-
         <div className="lantern-burner" aria-hidden="true">
-          <span className={`burner-flame ${lantern.p1Lit ? 'is-on' : ''}`}>🔥</span>
-          <span className={`burner-core ${bothLit ? 'is-bright' : ''}`}>✨</span>
-          <span className={`burner-flame ${lantern.p2Lit ? 'is-on' : ''}`}>🔥</span>
+          <span className={'burner-flame' + (lantern.p1Lit || lantern.p1Grip ? ' is-on' : '')}><HudIcon name="candle" /></span>
+          <span className={'burner-flame' + (lantern.p2Lit || lantern.p2Grip ? ' is-on' : '')}><HudIcon name="candle" /></span>
         </div>
-
-        {countdown !== null && countdown > 0 && (
-          <div className="lantern-countdown-overlay" role="status" aria-live="assertive">
-            <span>ปล่อยโคมพร้อมกันใน…</span>
-            <strong>{countdown}</strong>
-          </div>
-        )}
+        {remaining !== null && <div className="lantern-countdown-overlay" role="status" aria-label={'ปล่อยโคมใน ' + remaining + ' วินาที'}>{remaining}</div>}
       </div>
 
       {lantern.released ? (
-        <div className="romantic-reward-banner" role="status">
-          🏮✨ โคมความปรารถนาของ {players.p1.name} และ {players.p2.name} ลอยสว่างขึ้นสู่ท้องฟ้าในฉาก 3 มิติแล้ว!
-          ลองเงยหน้าชมโคมที่ค่อยๆ ลอยเหนือลานโคมยี่เป็งดูสิ
-        </div>
+        <p className="romantic-reward-banner" role="status">โคมของทั้งสองคนลอยสว่างขึ้นสู่ท้องฟ้าในฉาก 3 มิติแล้ว</p>
       ) : (
         <div className="lantern-controls">
-          <div className="field-group">
-            <label htmlFor="lantern-wish-input" className="field-label">
-              คำอธิษฐานของ {players[activeActor].name} บนโคมยี่เป็ง
-            </label>
-            <input
-              id="lantern-wish-input"
-              type="text"
-              className="text-input"
-              maxLength={110}
-              placeholder="เช่น ขอให้ปีหน้าเราได้จับมือกันดูโคมจริงๆ ด้วยกัน…"
-              value={myWish}
-              onChange={(e) => onSetWish(activeActor, e.target.value)}
-            />
-          </div>
-
-          <div className="lantern-step-actions">
-            {!bothLit ? (
-              <button
-                type="button"
-                className={`btn ${myLit ? 'btn--secondary' : 'btn--primary'}`}
-                disabled={myLit}
-                onClick={() => {
-                  playChime('lantern', soundEnabled);
-                  onLightSide(activeActor);
-                }}
-              >
-                {myLit
-                  ? `✓ ${players[activeActor].name} ประคองและจุดไฟฝั่งตัวเองแล้ว`
-                  : `🔥 ช่วยประคองและจุดไฟโคม (${players[activeActor].name})`}
+          <label className="field-group">
+            <span className="field-label">คำอธิษฐานของ {players[myRole].name}</span>
+            <textarea className="text-input text-area" rows={2} maxLength={110} value={myWish}
+              disabled={myGrip || myReady} onChange={(event) => onSetWish(myRole, event.target.value)} />
+          </label>
+          {!bothLit && (
+            <>
+              <label className="lantern-heat-control" data-ready={heatReady}>
+                <span className="field-label">ระดับไฟฝั่งคุณ <strong>{heat}%</strong></span>
+                <span className="lantern-heat-control__scale" aria-hidden="true">
+                  <i style={{ left: heatMin + '%', width: (heatMax - heatMin) + '%' }} />
+                </span>
+                <input type="range" min={0} max={100} value={heat} disabled={myGrip}
+                  aria-valuetext={heat + '% เขตทอง ' + heatMin + ' ถึง ' + heatMax + '%'}
+                  onChange={(event) => setHeat(Number(event.target.value))} />
+              </label>
+              <p className="skill-feedback">{heatReady ? 'ไฟอยู่ในเขตทองแล้ว' : 'ปรับไฟให้อยู่ในช่วง ' + heatMin + '–' + heatMax + '%'}</p>
+              <div className="lantern-balance" role="progressbar" aria-label="ประคองไฟพร้อมกัน"
+                aria-valuenow={Math.round(warmProgress)}>
+                <span style={{ width: warmProgress + '%' }} />
+              </div>
+              <button type="button" className="btn btn--primary lantern-hold-button" disabled={!canGrip}
+                aria-pressed={Boolean(myGrip)}
+                onPointerDown={pressHold} onPointerUp={stopHold} onPointerCancel={stopHold}
+                onLostPointerCapture={stopHold} onBlur={stopHold} onContextMenu={(event) => event.preventDefault()}
+                onKeyDown={(event) => {
+                  if (!isHoldKey(event.key)) return;
+                  event.preventDefault();
+                  if (!event.repeat) beginHold();
+                }} onKeyUp={(event) => {
+                  if (!isHoldKey(event.key)) return;
+                  event.preventDefault();
+                  stopHold();
+                }}>
+                {myGrip ? 'กำลังประคอง ค้างไว้' : 'กดค้างเพื่อประคองไฟ'}
               </button>
-            ) : (
-              <button
-                type="button"
-                className="btn btn--primary btn--lg"
-                disabled={myReady || countdown !== null}
-                onClick={() => {
-                  playChime('pickup', soundEnabled);
-                  onReadyRelease(activeActor);
-                }}
-              >
-                {countdown !== null
-                  ? `กำลังปล่อยโคมขึ้นสู่ท้องฟ้า (${countdown})…`
-                  : myReady
-                    ? `✓ พร้อมปล่อยแล้ว รออีกฝ่ายแตะปล่อยพร้อมกัน…`
-                    : `🏮 นับถอยหลังปล่อยโคมพร้อมกัน (${players[activeActor].name})`}
-              </button>
-            )}
-          </div>
-
-          <div className="partner-sync-pills">
-            <span className={`sync-pill ${lantern.p1Lit ? 'is-ready' : ''}`}>
-              {players.p1.name}:{' '}
-              {lantern.p1ReadyRelease
-                ? 'พร้อมปล่อยแล้ว 🏮'
-                : lantern.p1Lit
-                  ? 'จุดไฟแล้ว 🔥'
-                  : 'กำลังเขียนคำอธิษฐาน'}
+            </>
+          )}
+          {bothLit && (
+            <button type="button" className="btn btn--primary" disabled={!canReady}
+              onClick={() => onCommand({ type: 'lantern-ready' })}>
+              {myReady ? 'พร้อมแล้ว รออีกคน' : 'เตรียมปล่อยโคมพร้อมกัน'}
+            </button>
+          )}
+          <div className="activity-role-bar" aria-label="สถานะการประคองโคม">
+            <span className={'sync-pill' + (lantern.p1Grip || lantern.p1Lit ? ' is-ready' : '')}>
+              {players.p1.name} · {lantern.p1Lit ? 'ไฟพร้อม' : lantern.p1Grip ? 'กำลังประคอง' : 'รอประคอง'}
             </span>
-            <span className={`sync-pill ${lantern.p2Lit ? 'is-ready' : ''}`}>
-              {players.p2.name}:{' '}
-              {lantern.p2ReadyRelease
-                ? 'พร้อมปล่อยแล้ว 🏮'
-                : lantern.p2Lit
-                  ? 'จุดไฟแล้ว 🔥'
-                  : 'กำลังเขียนคำอธิษฐาน'}
+            <span className={'sync-pill' + (lantern.p2Grip || lantern.p2Lit ? ' is-ready' : '')}>
+              {players.p2.name} · {lantern.p2Lit ? 'ไฟพร้อม' : lantern.p2Grip ? 'กำลังประคอง' : 'รอประคอง'}
             </span>
           </div>
         </div>

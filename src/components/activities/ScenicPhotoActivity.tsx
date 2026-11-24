@@ -6,6 +6,8 @@ import type {
   PhotoBoothEvent,
   PhotoBoothFilterId,
   PhotoBoothLayoutId,
+  PhotoBoothShutter,
+  PhotoStripThemeId,
   PlayerId,
   PlayerProfile,
 } from '../../domain/types';
@@ -18,6 +20,9 @@ import {
   renderCouplePhotoBoothComposite,
   type CoupleShotPair,
 } from './photoBoothCanvas';
+import {
+  DEFAULT_STRIP_THEME, STRIP_FRAMES, STRIP_HEIGHT, STRIP_WIDTH, paintFramePaper, stripThemeOf,
+} from './photoStripFrames';
 
 interface ScenicPhotoActivityProps {
   spotId: string;
@@ -34,7 +39,8 @@ interface ScenicPhotoActivityProps {
     backdrop: PhotoBackdropId,
     caption: string,
     layout: PhotoBoothLayoutId,
-    compositeDataUrl: string | null
+    compositeDataUrl: string | null,
+    frameTheme?: PhotoStripThemeId
   ) => void;
   onSendPhotoFrame?: (
     dataUrl: string,
@@ -42,13 +48,7 @@ interface ScenicPhotoActivityProps {
     filter: PhotoBoothFilterId
   ) => void;
   onSendCamState?: (active: boolean) => void;
-  onSendShutter?: (payload: {
-    sessionId: string;
-    layout: PhotoBoothLayoutId;
-    backdrop: PhotoBackdropId;
-    pose: CouplePoseId;
-    caption: string;
-  }) => void;
+  onSendShutter?: (payload: PhotoBoothShutter) => void;
   onSendSnap?: (
     sessionId: string,
     shotIndex: number,
@@ -64,16 +64,40 @@ const POSES: { id: CouplePoseId; label: string; emoji: string; guide: string }[]
 ];
 
 const BACKDROPS: { id: PhotoBackdropId; label: string }[] = [
-  { id: 'sala', label: 'กรอบศาลาคืนเพ็ญ' },
-  { id: 'yipeng', label: 'กรอบโคมยี่เป็ง' },
-  { id: 'river', label: 'กรอบสายน้ำจันทร์เพ็ญ' },
-  { id: 'cream-minimal', label: 'กรอบครีมมินิมอล' },
+  { id: 'sala', label: 'ศาลาคืนเพ็ญ' },
+  { id: 'yipeng', label: 'โคมยี่เป็ง' },
+  { id: 'river', label: 'สายน้ำจันทร์เพ็ญ' },
+  { id: 'cream-minimal', label: 'แสงอำพัน' },
 ];
 
-const LAYOUTS: { id: PhotoBoothLayoutId; label: string; desc: string }[] = [
-  { id: 'polaroid', label: '🖼️ โพลารอยด์ 1 ภาพ', desc: 'ภาพคู่ใบใหญ่คมชัด' },
-  { id: 'strip-4', label: '🎞️ โฟโต้บูธ 4 ช็อต', desc: 'ถ่ายต่อเนื่อง 4 ท่าแบบสติกเกอร์' },
+const LAYOUTS: { id: PhotoBoothLayoutId; label: string }[] = [
+  { id: 'polaroid', label: 'โพลารอยด์ 1 ภาพ' },
+  { id: 'strip-4', label: 'โฟโต้บูธ 4 ช็อต' },
 ];
+
+const FRAME_THEMES = Object.keys(STRIP_FRAMES) as PhotoStripThemeId[];
+
+function FrameSwatch({ theme }: { theme: PhotoStripThemeId }) {
+  const previewRef = useRef<HTMLCanvasElement>(null);
+  const frame = STRIP_FRAMES[theme];
+  useEffect(() => {
+    const preview = previewRef.current;
+    const ctx = preview?.getContext('2d');
+    if (!preview || !ctx) return;
+    ctx.setTransform(preview.width / STRIP_WIDTH, 0, 0, preview.height / STRIP_HEIGHT, 0, 0);
+    paintFramePaper(ctx, theme);
+    ctx.fillStyle = frame.detail;
+    ctx.globalAlpha = .25;
+    const width = (STRIP_WIDTH - 2 * frame.inset - frame.seam) / 2;
+    for (let row = 0; row < 4; row += 1) {
+      const y = frame.top + row * (frame.rowHeight + frame.rowGap);
+      ctx.fillRect(frame.inset, y, width, frame.rowHeight);
+      ctx.fillRect(frame.inset + width + frame.seam, y, width, frame.rowHeight);
+    }
+    ctx.globalAlpha = 1;
+  }, [frame, theme]);
+  return <canvas ref={previewRef} width={81} height={234} aria-hidden="true" />;
+}
 
 const FILTERS: PhotoBoothFilterId[] = [
   'natural',
@@ -110,14 +134,13 @@ export function ScenicPhotoActivity({
     spotId === 'scenic-bench' ? 'river' : 'sala';
 
   const [layout, setLayout] = useState<PhotoBoothLayoutId>('polaroid');
+  const [frameTheme, setFrameTheme] = useState<PhotoStripThemeId>(DEFAULT_STRIP_THEME);
   const [backdrop, setBackdrop] = useState<PhotoBackdropId>(defaultBackdrop);
-  const [filter, setFilter] = useState<PhotoBoothFilterId>('warm-candle');
+  const [filter, setFilter] = useState<PhotoBoothFilterId>('natural');
   const [mirrored, setMirrored] = useState(true);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [showCenterGuide, setShowCenterGuide] = useState(true);
-  const [caption, setCaption] = useState(
-    `คืนเพ็ญแสนอบอุ่นของ ${players.p1.name} และ ${players.p2.name}`
-  );
+  const [caption, setCaption] = useState('');
 
   // Camera state
   const [cameraOn, setCameraOn] = useState(false);
@@ -132,7 +155,12 @@ export function ScenicPhotoActivity({
   const [totalShotsInRun, setTotalShotsInRun] = useState<number>(1);
   const [flashActive, setFlashActive] = useState(false);
   const [developing, setDeveloping] = useState(false);
-  const [latestHdPhoto, setLatestHdPhoto] = useState<string | null>(null);
+  const [latestPhoto, setLatestPhoto] = useState<{
+    previewUrl: string;
+    file: File;
+    frameTheme?: PhotoStripThemeId;
+  } | null>(null);
+  const [resultError, setResultError] = useState<string | null>(null);
 
   const mountedRef = useRef(true);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -152,11 +180,6 @@ export function ScenicPhotoActivity({
   onSavePhotoRef.current = onSavePhoto;
   const playersRef = useRef(players);
   playersRef.current = players;
-  const captionRef = useRef(caption);
-  captionRef.current = caption;
-
-  const partnerFrameRef = useRef<string | null>(null);
-  partnerFrameRef.current = partnerLiveFrame;
   const cameraOnRef = useRef(cameraOn);
   cameraOnRef.current = cameraOn;
   const mirroredRef = useRef(mirrored);
@@ -165,18 +188,20 @@ export function ScenicPhotoActivity({
   filterRef.current = filter;
 
   // Tracks in-flight synchronized session shots from both P1 and P2
-  const activeSessionRef = useRef<{
-    sessionId: string;
-    layout: PhotoBoothLayoutId;
-    backdrop: PhotoBackdropId;
-    pose: CouplePoseId;
-    caption: string;
-    totalShots: number;
+  const activeSessionRef = useRef<PhotoBoothShutter & {
+    takenAt: number;
     isInitiator: boolean;
     shots: { p1?: string | null; p2?: string | null }[];
     finalized: boolean;
     finalizeTimer?: number;
   } | null>(null);
+
+  useEffect(() => {
+    const previewUrl = latestPhoto?.previewUrl;
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [latestPhoto?.previewUrl]);
 
   const attachStreamToVideo = useCallback((el: HTMLVideoElement | null) => {
     videoRef.current = el;
@@ -354,40 +379,36 @@ export function ScenicPhotoActivity({
     }
 
     setDeveloping(true);
-    const pairs: CoupleShotPair[] = Array.from(
-      { length: sess.totalShots },
-      (_, idx) => {
-        const s = sess.shots[idx] ?? {};
-        return {
-          p1DataUrl:
-            s.p1 ??
-            (myRole === 'p2' ? partnerFrameRef.current : null) ??
-            null,
-          p2DataUrl:
-            s.p2 ??
-            (myRole === 'p1' ? partnerFrameRef.current : null) ??
-            null,
-        };
-      }
-    );
+    const pairs: CoupleShotPair[] = sess.shots.map((shot) => ({
+      p1DataUrl: shot.p1 ?? null,
+      p2DataUrl: shot.p2 ?? null,
+    }));
 
     const rendered = await renderCouplePhotoBoothComposite({
       shots: pairs,
       p1: playersRef.current.p1,
       p2: playersRef.current.p2,
       layout: sess.layout,
+      frameTheme: sess.frameTheme,
       backdrop: sess.backdrop,
       pose: sess.pose,
       caption: sess.caption,
+      takenAt: sess.takenAt,
     });
 
-    if (!mountedRef.current) return;
+    if (!mountedRef.current || activeSessionRef.current !== sess) return;
     setDeveloping(false);
     setCountdown(null);
     setCurrentShotNumber(0);
-    if (rendered.hdPngDataUrl) {
-      setLatestHdPhoto(rendered.hdPngDataUrl);
+    if (!rendered) {
+      setResultError('สร้างภาพคู่ไม่สำเร็จ ลองถ่ายอีกครั้ง');
+      return;
     }
+
+    const theme = sess.layout === 'strip-4' ? stripThemeOf(sess.frameTheme) : undefined;
+    const filename = `loy-krathong-${theme ?? 'polaroid'}-${sess.takenAt}.png`;
+    const file = new File([rendered.png], filename, { type: 'image/png' });
+    setLatestPhoto({ file, previewUrl: URL.createObjectURL(file), frameTheme: theme });
 
     if (sess.isInitiator) {
       onSavePhotoRef.current(
@@ -395,10 +416,11 @@ export function ScenicPhotoActivity({
         sess.backdrop,
         sess.caption,
         sess.layout,
-        rendered.compactJpegDataUrl ?? rendered.hdPngDataUrl
+        rendered.compactJpegDataUrl,
+        theme
       );
     }
-  }, [myRole]);
+  }, []);
 
   const checkSessionComplete = useCallback(() => {
     const sess = activeSessionRef.current;
@@ -417,12 +439,8 @@ export function ScenicPhotoActivity({
   }, [bothOnline, finalizePhotoSession, myRole, partnerRole]);
 
   const runShutterSequence = useCallback(
-    (params: {
-      sessionId: string;
-      layout: PhotoBoothLayoutId;
-      backdrop: PhotoBackdropId;
-      pose: CouplePoseId;
-      caption: string;
+    (params: PhotoBoothShutter & {
+      takenAt: number;
       isInitiator: boolean;
     }) => {
       for (const t of shutterTimersRef.current) window.clearTimeout(t);
@@ -434,11 +452,12 @@ export function ScenicPhotoActivity({
       const totalShots = params.layout === 'strip-4' ? 4 : 1;
       activeSessionRef.current = {
         ...params,
-        totalShots,
         shots: Array.from({ length: totalShots }, () => ({})),
         finalized: false,
       };
       setTotalShotsInRun(totalShots);
+      setDeveloping(false);
+      setResultError(null);
 
       const scheduleShot = (shotIndex: number) => {
         setCurrentShotNumber(shotIndex + 1);
@@ -536,18 +555,22 @@ export function ScenicPhotoActivity({
 
     if (lastPhotoEvent.type === 'photobooth_shutter') {
       if (activeSessionRef.current?.sessionId === lastPhotoEvent.sessionId) {
+        activeSessionRef.current.takenAt = lastPhotoEvent.ts;
         return;
       }
       setLayout(lastPhotoEvent.layout);
+      const receivedTheme = lastPhotoEvent.layout === 'strip-4' ? stripThemeOf(lastPhotoEvent.frameTheme) : undefined;
+      if (receivedTheme) setFrameTheme(receivedTheme);
       setBackdrop(lastPhotoEvent.backdrop);
-      const nextCaption = lastPhotoEvent.caption || captionRef.current;
-      setCaption(nextCaption);
+      setCaption(lastPhotoEvent.caption);
       runShutterSequence({
         sessionId: lastPhotoEvent.sessionId,
         layout: lastPhotoEvent.layout,
+        frameTheme: receivedTheme,
         backdrop: lastPhotoEvent.backdrop,
         pose: lastPhotoEvent.pose,
-        caption: nextCaption,
+        caption: lastPhotoEvent.caption,
+        takenAt: lastPhotoEvent.ts,
         isInitiator: lastPhotoEvent.playerId === myRole,
       });
       return;
@@ -566,24 +589,17 @@ export function ScenicPhotoActivity({
 
   const handleStartBoothShutter = () => {
     if (countdown !== null || developing) return;
-    const sessionId = `pb-${myRole}-${Date.now()}`;
-    if (bothOnline && onSendShutter) {
-      onSendShutter({
-        sessionId,
-        layout,
-        backdrop,
-        pose: activePose,
-        caption,
-      });
-    }
-    runShutterSequence({
-      sessionId,
+    const takenAt = Date.now();
+    const shutter: PhotoBoothShutter = {
+      sessionId: `pb-${myRole}-${takenAt}`,
       layout,
+      frameTheme: layout === 'strip-4' ? frameTheme : undefined,
       backdrop,
       pose: activePose,
-      caption,
-      isInitiator: true,
-    });
+      caption: caption.trim(),
+    };
+    if (bothOnline) onSendShutter?.(shutter);
+    runShutterSequence({ ...shutter, takenAt, isInitiator: true });
   };
 
   const handleFlipCamera = () => {
@@ -591,6 +607,17 @@ export function ScenicPhotoActivity({
     setFacingMode(nextFacing);
     if (cameraOn) {
       void startCamera(nextFacing);
+    }
+  };
+
+  const shareLatestPhoto = async () => {
+    if (!latestPhoto) return;
+    try {
+      await navigator.share({ files: [latestPhoto.file] });
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        setResultError('แชร์ภาพไม่ได้ ลองดาวน์โหลดไฟล์ PNG');
+      }
     }
   };
 
@@ -652,13 +679,7 @@ export function ScenicPhotoActivity({
       className="romantic-activity scenic-photo-activity"
       aria-label="Online Couple Photo Booth ถ่ายรูปคู่ข้ามระยะทาง"
     >
-      <div className="dialogue-bubble">
-        <p>
-          <strong>📸 Online Couple Photo Booth:</strong> เปิดกล้องพร้อมกันแม้อยู่คนละที่!
-          จัดท่าให้มือหรือไหล่ชิดเส้นกลางจอ แล้วกดนับถอยหลังถ่ายพร้อมกันได้ทั้งแบบ{' '}
-          <strong>โพลารอยด์ 1 ภาพ</strong> และ <strong>โฟโต้บูธ 4 ช็อต (4-Cut)</strong>
-        </p>
-      </div>
+      <p className="booth-intro">ถ่ายพร้อมกันได้จากคนละเครื่อง หากปิดกล้อง ภาพจะใช้อวตารในชุดที่สวมอยู่</p>
 
       {/* Camera Control Strip */}
       <div className="booth-camera-bar">
@@ -745,12 +766,67 @@ export function ScenicPhotoActivity({
 
         {developing && (
           <div className="booth-countdown-overlay" role="status">
-            <span>✨ กำลังล้างฟิล์มและรวมภาพคู่ความคมชัดสูง…</span>
+            <span>กำลังล้างฟิล์ม…</span>
           </div>
         )}
       </div>
 
-      {/* Primary Shutter Button */}
+      <fieldset className="swatch-fieldset" disabled={countdown !== null || developing}>
+        <legend className="field-label">รูปแบบภาพคู่</legend>
+        <div className="chip-grid">
+          {LAYOUTS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`pose-chip ${layout === item.id ? 'is-selected' : ''}`}
+              aria-pressed={layout === item.id}
+              onClick={() => {
+                playChime('beat', soundEnabled);
+                setLayout(item.id);
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+
+      {layout === 'strip-4' && (
+        <fieldset className="booth-frame-picker" disabled={countdown !== null || developing}>
+          <legend className="field-label">กรอบโฟโต้บูธ</legend>
+          <div className="booth-frame-grid">
+            {FRAME_THEMES.map((theme) => (
+              <label className="booth-frame-option" key={theme}>
+                <input
+                  type="radio"
+                  name={`photo-strip-frame-${spotId}`}
+                  value={theme}
+                  checked={frameTheme === theme}
+                  onChange={() => setFrameTheme(theme)}
+                />
+                <span className="booth-frame-option__face">
+                  <FrameSwatch theme={theme} />
+                  <span lang="en">{STRIP_FRAMES[theme].title}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
+
+      <div className="field-group">
+        <label htmlFor="photo-caption-input" className="field-label">ข้อความบนกรอบ</label>
+        <input
+          id="photo-caption-input"
+          type="text"
+          className="text-input"
+          maxLength={90}
+          placeholder="เขียนข้อความสั้น ๆ ถึงกัน (ไม่บังคับ)"
+          value={caption}
+          onChange={(e) => setCaption(e.target.value)}
+        />
+      </div>
+
       <div className="dialog-actions booth-shutter-row">
         <button
           type="button"
@@ -761,59 +837,41 @@ export function ScenicPhotoActivity({
           {countdown !== null
             ? `กำลังถ่ายภาพ (${countdown})…`
             : layout === 'strip-4'
-              ? '🎞️ นับถอยหลังถ่ายโฟโต้บูธ 4 ช็อตพร้อมกัน'
-              : '📸 นับถอยหลังถ่ายรูปคู่พร้อมกัน (3… 2… 1)'}
+              ? 'นับถอยหลังถ่ายโฟโต้บูธ 4 ช็อตพร้อมกัน'
+              : 'นับถอยหลังถ่ายรูปคู่พร้อมกัน (3… 2… 1)'}
         </button>
       </div>
 
-      {/* Finished HD Couple Photo Result Preview */}
-      {latestHdPhoto && (
-        <div className="booth-result-card" role="region" aria-label="ภาพถ่ายคู่ล่าสุดจาก Photo Booth">
+      {resultError && <p className="booth-camera-error" role="alert">{resultError}</p>}
+
+      {latestPhoto && (
+        <div className="booth-result-card" role="region" aria-label="ภาพคู่ล่าสุด">
           <div className="booth-result-card__head">
-            <strong>✨ ล้างฟิล์มเสร็จแล้ว! ภาพคู่ของเราสองคน</strong>
-            <button
-              type="button"
-              className="btn btn--primary btn--sm"
-              onClick={() =>
-                downloadDataUrl(
-                  latestHdPhoto,
-                  `loykratong-photobooth-${layout}.png`
-                )
-              }
-            >
-              💾 ดาวน์โหลดภาพ (.PNG)
-            </button>
+            <strong>{latestPhoto.frameTheme ? STRIP_FRAMES[latestPhoto.frameTheme].title : 'ภาพคู่โพลารอยด์'}</strong>
+            <div className="booth-result-card__actions">
+              {navigator.canShare?.({ files: [latestPhoto.file] }) && (
+                <button type="button" className="btn btn--secondary btn--sm" onClick={() => void shareLatestPhoto()}>
+                  แชร์ภาพ
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn btn--primary btn--sm"
+                onClick={() => downloadDataUrl(latestPhoto.previewUrl, latestPhoto.file.name)}
+              >
+                ดาวน์โหลด PNG
+              </button>
+            </div>
           </div>
           <img
-            src={latestHdPhoto}
-            alt="ภาพถ่ายคู่รักจาก Online Photo Booth"
-            className={`booth-result-card__img ${layout === 'strip-4' ? 'is-strip' : ''}`}
+            src={latestPhoto.previewUrl}
+            alt={latestPhoto.frameTheme ? 'ภาพคู่สี่ช็อต' : 'ภาพคู่โพลารอยด์'}
+            className={`booth-result-card__img ${latestPhoto.frameTheme ? 'is-strip' : ''}`}
           />
         </div>
       )}
 
-      {/* Layout, Filter, Pose & Frame Customization */}
       <div className="booth-options-grid">
-        <fieldset className="swatch-fieldset">
-          <legend className="field-label">รูปแบบ Photo Booth</legend>
-          <div className="chip-grid">
-            {LAYOUTS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={`pose-chip ${layout === item.id ? 'is-selected' : ''}`}
-                aria-pressed={layout === item.id}
-                onClick={() => {
-                  playChime('beat', soundEnabled);
-                  setLayout(item.id);
-                }}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </fieldset>
-
         <fieldset className="swatch-fieldset">
           <legend className="field-label">ฟิลเตอร์แสง</legend>
           <div className="chip-grid">
@@ -855,7 +913,7 @@ export function ScenicPhotoActivity({
         </fieldset>
 
         <fieldset className="swatch-fieldset">
-          <legend className="field-label">ธีมกรอบรูป</legend>
+          <legend className="field-label">{layout === 'strip-4' ? 'แสงฉากอวตาร' : 'ธีมกรอบโพลารอยด์'}</legend>
           <div className="chip-grid">
             {BACKDROPS.map((bg) => (
               <button
@@ -870,20 +928,6 @@ export function ScenicPhotoActivity({
             ))}
           </div>
         </fieldset>
-      </div>
-
-      <div className="field-group">
-        <label htmlFor="photo-caption-input" className="field-label">
-          ข้อความบนกรอบโพลารอยด์
-        </label>
-        <input
-          id="photo-caption-input"
-          type="text"
-          className="text-input"
-          maxLength={90}
-          value={caption}
-          onChange={(e) => setCaption(e.target.value)}
-        />
       </div>
 
       {photoMemories.length > 0 && (

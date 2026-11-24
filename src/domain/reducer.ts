@@ -6,7 +6,6 @@ import type {
   GameState,
   KrathongDecorationItem,
   KrathongDesign,
-  LeafCutShapeId,
   LeafRelayState,
   LotusBoatState,
   MaterialId,
@@ -40,21 +39,11 @@ export const MATERIAL_LABELS: Record<MaterialId, { name: string; hint: string }>
   },
 };
 
-export const LEAF_SHAPES_ORDER: LeafCutShapeId[] = ['swan', 'lotus', 'garuda'];
-
 export const FORTUNE_PROMPTS = [
   'สถานที่ที่อยากจูงมือกันไปเที่ยวมากที่สุดคือที่ไหน?',
   'ความทรงจำระหว่างเราที่นึกถึงทีไรก็ยิ้มออกทุกทีคือตอนไหน?',
   'ถ้าคืนนี้ขอพรให้เราสองคนได้ 1 ข้อ อยากขออะไร?',
   'สิ่งเล็กๆ ที่แฟนทำแล้วใจละลายที่สุดคืออะไร?',
-] as const;
-
-export const BOAT_LOTUS_TARGETS = [
-  { id: 'lotus-1', x: 24, y: 28, label: 'บัวชมพูใต้แสงดาว' },
-  { id: 'lotus-2', x: 52, y: 20, label: 'บัวหลวงกลางสระ' },
-  { id: 'lotus-3', x: 78, y: 34, label: 'บัวกลีบแก้วริมฝั่ง' },
-  { id: 'lotus-4', x: 66, y: 72, label: 'บัวหิ่งห้อยคู่รัก' },
-  { id: 'lotus-5', x: 28, y: 74, label: 'บัวจันทร์เพ็ญ' },
 ] as const;
 
 export function createEmptyPortrait(): PlayerPortrait {
@@ -570,129 +559,6 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         : { ...state, nearbySpotId: action.spotId };
 
     // =========================================================================
-    // 01 — พายเรือเก็บดอกบัวด้วยกัน (Boat Lotus Gathering)
-    // =========================================================================
-    case 'UPDATE_LOTUS_BOAT': {
-      const nextBoat: LotusBoatState = {
-        ...state.lotusBoat,
-        ...action.patch,
-      };
-      const swapped = action.patch.rower && action.patch.rower !== state.lotusBoat.rower;
-      const rowerName = state.players[nextBoat.rower].name;
-      return {
-        ...state,
-        lotusBoat: nextBoat,
-        lastEventLog: swapped
-          ? `สลับหน้าที่แล้ว! ตอนนี้ ${rowerName} เป็นคนพายเรือ อีกคนช่วยเก็บดอกบัวชมพู`
-          : state.lastEventLog,
-      };
-    }
-
-    case 'PICK_BOAT_LOTUS': {
-      if (state.lotusBoat.collectedIds.includes(action.lotusId)) return state;
-      const nextCollected = [...state.lotusBoat.collectedIds, action.lotusId];
-      const finished = nextCollected.length >= BOAT_LOTUS_TARGETS.length;
-      const pickerName = state.players[action.byPlayer].name;
-      return {
-        ...state,
-        lotusBoat: {
-          ...state.lotusBoat,
-          collectedIds: nextCollected,
-          completed: state.lotusBoat.completed || finished,
-        },
-        inventory: finished
-          ? { ...state.inventory, 'lotus-blossom': true }
-          : state.inventory,
-        lastEventLog: finished
-          ? `ทั้งคู่พายเรือเก็บดอกบัวชมพูครบท่ามกลางแสงหิ่งห้อยแล้ว!`
-          : `${pickerName} เก็บดอกบัวชมพูขึ้นเรือได้แล้ว (${nextCollected.length}/${BOAT_LOTUS_TARGETS.length} ดอก)`,
-      };
-    }
-
-    // =========================================================================
-    // 02 — ช่วยกันพับใบตอง (Real-Time Leaf Cut -> Fold Relay)
-    // =========================================================================
-    case 'UPDATE_LEAF_RELAY': {
-      const nextRelay: LeafRelayState = {
-        ...state.leafRelay,
-        ...action.patch,
-      };
-      const swapped = action.patch.cutter && action.patch.cutter !== state.leafRelay.cutter;
-      const cutterName = state.players[nextRelay.cutter].name;
-      return {
-        ...state,
-        leafRelay: nextRelay,
-        lastEventLog: swapped
-          ? `สลับหน้าที่พับใบตองแล้ว! ${cutterName} เจียนใบตอง อีกคนรอรับมาพับกลีบ`
-          : state.lastEventLog,
-      };
-    }
-
-    case 'ADVANCE_LEAF_CUT': {
-      if (state.leafRelay.passedLeafReady) return state;
-      const nextStep = Math.min(3, state.leafRelay.cutStep + 1);
-      const readyToPass = nextStep >= 3;
-      const cutterName = state.players[action.byPlayer].name;
-      return {
-        ...state,
-        leafRelay: {
-          ...state.leafRelay,
-          cutStep: nextStep,
-          passedLeafReady: readyToPass,
-        },
-        lastEventLog: readyToPass
-          ? `${cutterName} เจียนใบตองเสร็จแล้ว! ส่งต่อใบตองสดให้อีกฝ่ายพับกลีบได้เลย`
-          : `${cutterName} กำลังเจียนขอบใบตองอย่างบรรจง (${nextStep}/3)`,
-      };
-    }
-
-    case 'ADVANCE_LEAF_FOLD': {
-      if (!state.leafRelay.passedLeafReady) return state;
-      const nextFold = Math.min(3, state.leafRelay.foldStep + 1);
-      const folderName = state.players[action.byPlayer].name;
-      if (nextFold < 3) {
-        return {
-          ...state,
-          leafRelay: {
-            ...state.leafRelay,
-            foldStep: nextFold,
-          },
-          lastEventLog: `${folderName} พับกลีบใบตองอย่างประณีต (${nextFold}/3)`,
-        };
-      }
-
-      const nextFinished = state.leafRelay.finishedPetals.includes(
-        state.leafRelay.currentShape
-      )
-        ? state.leafRelay.finishedPetals
-        : [...state.leafRelay.finishedPetals, state.leafRelay.currentShape];
-
-      const completed = nextFinished.length >= LEAF_SHAPES_ORDER.length;
-      const nextShape =
-        LEAF_SHAPES_ORDER.find((shape) => !nextFinished.includes(shape)) ??
-        state.leafRelay.currentShape;
-
-      return {
-        ...state,
-        leafRelay: {
-          ...state.leafRelay,
-          cutStep: 0,
-          foldStep: 0,
-          passedLeafReady: false,
-          currentShape: nextShape,
-          finishedPetals: nextFinished,
-          completed: state.leafRelay.completed || completed,
-        },
-        inventory: completed
-          ? { ...state.inventory, 'banana-leaf': true }
-          : state.inventory,
-        lastEventLog: completed
-          ? `ป้าบัวชื่นชม! ทั้งคู่ช่วยกันเจียนและพับกลีบใบตองครบทั้ง 3 แบบสวยงามมาก`
-          : `${folderName} พับกลีบเสร็จเรียบร้อย! ส่งต่อให้เจียนกลีบต่อไปกันเลย`,
-      };
-    }
-
-    // =========================================================================
     // 03 — กระดาษคำทำนายของเราสองคน (Blind Q&A + Simultaneous Reveal)
     // =========================================================================
     case 'SET_FORTUNE_PROMPT': {
@@ -798,61 +664,6 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
           action.playerId === 'p1'
             ? { ...state.skyLantern, p1Wish: cleaned }
             : { ...state.skyLantern, p2Wish: cleaned },
-      };
-    }
-
-    case 'LIGHT_LANTERN_SIDE': {
-      if (state.skyLantern.released) return state;
-      const nextLantern: SkyLanternState = {
-        ...state.skyLantern,
-        p1Lit: action.playerId === 'p1' ? true : state.skyLantern.p1Lit,
-        p2Lit: action.playerId === 'p2' ? true : state.skyLantern.p2Lit,
-      };
-      const bothLit = nextLantern.p1Lit && nextLantern.p2Lit;
-      const actorName = state.players[action.playerId].name;
-      return {
-        ...state,
-        skyLantern: nextLantern,
-        lastEventLog: bothLit
-          ? 'ไฟโคมสว่างอุ่นพร้อมแล้ว ทั้งคู่กดเตรียมปล่อยเพื่อนับถอยหลังส่งโคมขึ้นฟ้าพร้อมกัน!'
-          : `${actorName} ช่วยประคองและจุดไฟโคมด้านของตัวเองแล้ว`,
-      };
-    }
-
-    case 'READY_RELEASE_LANTERN': {
-      if (state.skyLantern.released) return state;
-      const nextLantern: SkyLanternState = {
-        ...state.skyLantern,
-        p1ReadyRelease:
-          action.playerId === 'p1' ? true : state.skyLantern.p1ReadyRelease,
-        p2ReadyRelease:
-          action.playerId === 'p2' ? true : state.skyLantern.p2ReadyRelease,
-      };
-      const actorName = state.players[action.playerId].name;
-      return {
-        ...state,
-        skyLantern: nextLantern,
-        lastEventLog:
-          nextLantern.p1ReadyRelease && nextLantern.p2ReadyRelease
-            ? 'ทั้งสองคนพร้อมแล้ว! เริ่มนับถอยหลังส่งโคมคำอธิษฐานขึ้นสู่ท้องฟ้า…'
-            : `${actorName} พร้อมปล่อยโคมแล้ว รออีกฝ่ายแตะปล่อยพร้อมกัน`,
-      };
-    }
-
-    case 'COMPLETE_LANTERN_RELEASE': {
-      if (state.skyLantern.released) return state;
-      return {
-        ...state,
-        skyLantern: {
-          ...state.skyLantern,
-          p1Lit: true,
-          p2Lit: true,
-          p1ReadyRelease: true,
-          p2ReadyRelease: true,
-          released: true,
-          releasedAt: action.timestamp ?? new Date().toISOString(),
-        },
-        lastEventLog: `โคมความปรารถนาของ ${state.players.p1.name} และ ${state.players.p2.name} ลอยสว่างไสวขึ้นสู่ท้องฟ้ายามค่ำคืนแล้ว!`,
       };
     }
 
@@ -963,6 +774,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         pose: action.pose,
         backdrop: action.backdrop,
         layout: action.layout ?? ('polaroid' as const),
+        ...(action.layout === 'strip-4' && action.frameTheme ? { frameTheme: action.frameTheme } : {}),
         caption:
           action.caption.trim() ||
           `คืนเพ็ญแสนอบอุ่นของ ${p1Name} และ ${p2Name}`,

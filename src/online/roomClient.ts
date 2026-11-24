@@ -1,11 +1,10 @@
+import type { ActivitySkillCommand } from '../domain/activitySkills.mjs';
 import type {
   CoopSignalEvent,
   CoupleEmoteEvent,
-  CouplePoseId,
-  PhotoBackdropId,
   PhotoBoothEvent,
   PhotoBoothFilterId,
-  PhotoBoothLayoutId,
+  PhotoBoothShutter,
   PlayerId,
   PlayerPosition,
   PlayerProfile,
@@ -50,19 +49,23 @@ export function readInviteCode(): string | null {
 }
 
 export function readRoomSession(invite: string | null): RoomSession | null {
-  try {
-    const saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) ?? 'null') as RoomSession | null;
-    if (saved && ROOM_CODE.test(saved.roomCode) && SEAT_KEY.test(saved.seatKey)
-      && (saved.role === 'p1' || saved.role === 'p2') && (invite === null || invite === saved.roomCode)) return saved;
-  } catch { /* Storage is optional when a browser blocks it. */ }
+  for (const location of ['sessionStorage', 'localStorage'] as const) {
+    try {
+      const saved = JSON.parse(window[location].getItem(SESSION_KEY) ?? 'null') as RoomSession | null;
+      if (saved && ROOM_CODE.test(saved.roomCode) && SEAT_KEY.test(saved.seatKey)
+        && (saved.role === 'p1' || saved.role === 'p2') && (invite === null || invite === saved.roomCode)) return saved;
+    } catch { /* Private browsing can disable storage. */ }
+  }
   return null;
 }
 
 export function saveRoomSession(session: RoomSession | null): void {
-  try {
-    if (session) sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
-    else sessionStorage.removeItem(SESSION_KEY);
-  } catch { /* In-memory reconnect continues even when storage is unavailable. */ }
+  for (const location of ['sessionStorage', 'localStorage'] as const) {
+    try {
+      if (session) window[location].setItem(SESSION_KEY, JSON.stringify(session));
+      else window[location].removeItem(SESSION_KEY);
+    } catch { /* In-memory reconnect remains available. */ }
+  }
 }
 
 export function buildRoomInviteUrl(roomCode: string): string {
@@ -164,12 +167,17 @@ export class OnlineRoomClient {
           }
       }
     };
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       if (this.ws !== socket) return;
       this.clearHandshake();
       this.clearMove();
       this.ws = null;
       this.joined = false;
+      if (event?.code === 4001) {
+        this.intent = null;
+        this.callbacks.onStatusChange('error', 'ห้องนี้เปิดต่อที่แท็บใหม่ของคุณแล้ว', 'seat_moved');
+        return;
+      }
       if (!this.intent) return;
       this.attempts += 1;
       if (this.intent.type !== 'resume_room' && this.attempts > 2) {
@@ -223,6 +231,10 @@ export class OnlineRoomClient {
     this.send({ type: 'coop_signal', spotId, action, value, x, y });
   }
 
+  sendActivitySkill(command: ActivitySkillCommand): void {
+    this.send({ type: 'activity_skill', command });
+  }
+
   sendPhotoBoothFrame(dataUrl: string, mirrored: boolean, filter: PhotoBoothFilterId): void {
     this.send({ type: 'photobooth_frame', dataUrl, mirrored, filter });
   }
@@ -231,13 +243,7 @@ export class OnlineRoomClient {
     this.send({ type: 'photobooth_cam_state', active });
   }
 
-  sendPhotoBoothShutter(payload: {
-    sessionId: string;
-    layout: PhotoBoothLayoutId;
-    backdrop: PhotoBackdropId;
-    pose: CouplePoseId;
-    caption: string;
-  }): void {
+  sendPhotoBoothShutter(payload: PhotoBoothShutter): void {
     this.send({ type: 'photobooth_shutter', ...payload });
   }
 

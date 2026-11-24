@@ -42,3 +42,7 @@ blender --background --python-exit-code 1 --python tools/art/prepare_nature.py -
 `src/game/festival/assets.ts` preloads the libraries through `GLTFLoader` and shares geometry and materials across instances. The landscape, sky, candle glow and river shader are generated in Three.js.
 
 The HUD uses self-hosted Thai and Latin WOFF2 subsets of [Noto Sans Thai](https://github.com/google/fonts/tree/main/ofl/notosansthai). Both are distributed with the SIL Open Font License in [public/fonts/OFL-NotoSansThai.txt](public/fonts/OFL-NotoSansThai.txt).
+
+The photobooth uses the Thai and Latin WOFF2 subsets of [Mali](https://github.com/google/fonts/tree/main/ofl/mali) for the Love Letter frame in `public/fonts/mali-500-*.woff2`. Its license is [OFL-Mali.txt](public/fonts/OFL-Mali.txt).
+
+The photobooth uses [Noto Serif Thai](https://github.com/google/fonts/tree/main/ofl/notoserifthai) for names in the other frames in `public/fonts/notoserifthai-500-*.woff2`. Its license is [OFL-NotoSerifThai.txt](public/fonts/OFL-NotoSerifThai.txt).

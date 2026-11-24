@@ -1,3 +1,4 @@
+import type { ActivitySkillCommand } from '../domain/activitySkills.mjs';
 import { useEffect, useRef } from 'react';
 import { getLandmarkForSpotKind } from '../domain/landmarks';
 import type {
@@ -6,12 +7,12 @@ import type {
   GameState,
   KrathongDecorationItem,
   KrathongDesign,
-  LeafRelayState,
-  LotusBoatState,
   PhotoBackdropId,
   PhotoBoothEvent,
   PhotoBoothFilterId,
   PhotoBoothLayoutId,
+  PhotoBoothShutter,
+  PhotoStripThemeId,
   PlayerId,
 } from '../domain/types';
 import { getSpotById } from '../domain/worldMap';
@@ -32,6 +33,7 @@ interface InteractionModalProps {
   lastPhotoEvent?: PhotoBoothEvent | null;
   reducedMotion: boolean;
   onClose: () => void;
+  onActivitySkill: (command: ActivitySkillCommand) => void;
   onSendCoopSignal?: (
     spotId: string,
     action: string,
@@ -45,25 +47,14 @@ interface InteractionModalProps {
     filter: PhotoBoothFilterId
   ) => void;
   onSendPhotoCamState?: (active: boolean) => void;
-  onSendPhotoShutter?: (payload: {
-    sessionId: string;
-    layout: PhotoBoothLayoutId;
-    backdrop: PhotoBackdropId;
-    pose: CouplePoseId;
-    caption: string;
-  }) => void;
+  onSendPhotoShutter?: (payload: PhotoBoothShutter) => void;
   onSendPhotoSnap?: (
     sessionId: string,
     shotIndex: number,
     dataUrl: string | null
   ) => void;
   // Activity 01
-  onUpdateLotusBoat: (patch: Partial<LotusBoatState>) => void;
-  onPickBoatLotus: (lotusId: string, byPlayer: PlayerId) => void;
   // Activity 02
-  onUpdateLeafRelay: (patch: Partial<LeafRelayState>) => void;
-  onAdvanceLeafCut: (byPlayer: PlayerId) => void;
-  onAdvanceLeafFold: (byPlayer: PlayerId) => void;
   // Activity 03
   onSetFortunePrompt: (promptIndex: number) => void;
   onSetFortuneAnswer: (playerId: PlayerId, answer: string) => void;
@@ -71,9 +62,6 @@ interface InteractionModalProps {
   onResetFortuneRound: () => void;
   // Activity 04
   onSetLanternWish: (playerId: PlayerId, wish: string) => void;
-  onLightLanternSide: (playerId: PlayerId) => void;
-  onReadyReleaseLantern: (playerId: PlayerId) => void;
-  onCompleteLanternRelease: () => void;
   // Activity 06
   onUpdateKrathongDesign: (patch: Partial<KrathongDesign>) => void;
   onAddKrathongDecoration: (item: KrathongDecorationItem) => void;
@@ -88,7 +76,8 @@ interface InteractionModalProps {
     backdrop: PhotoBackdropId,
     caption: string,
     layout?: PhotoBoothLayoutId,
-    compositeDataUrl?: string | null
+    compositeDataUrl?: string | null,
+    frameTheme?: PhotoStripThemeId
   ) => void;
   // Activity 08
   onTogglePierReady: (playerId: PlayerId, ready?: boolean) => void;
@@ -105,24 +94,17 @@ export function InteractionModal({
   lastPhotoEvent = null,
   reducedMotion,
   onClose,
+  onActivitySkill,
   onSendCoopSignal,
   onSendPhotoFrame,
   onSendPhotoCamState,
   onSendPhotoShutter,
   onSendPhotoSnap,
-  onUpdateLotusBoat,
-  onPickBoatLotus,
-  onUpdateLeafRelay,
-  onAdvanceLeafCut,
-  onAdvanceLeafFold,
   onSetFortunePrompt,
   onSetFortuneAnswer,
   onLockFortuneAnswer,
   onResetFortuneRound,
   onSetLanternWish,
-  onLightLanternSide,
-  onReadyReleaseLantern,
-  onCompleteLanternRelease,
   onUpdateKrathongDesign,
   onAddKrathongDecoration,
   onMoveKrathongDecoration,
@@ -247,12 +229,11 @@ export function InteractionModal({
                 players={state.players}
                 myRole={myOnlineRole}
                 bothOnline={bothOnline}
-                lastSignal={lastPartnerSignal}
+
                 reducedMotion={reducedMotion}
                 soundEnabled={state.settings.soundEnabled}
-                onUpdateBoat={onUpdateLotusBoat}
-                onPickLotus={onPickBoatLotus}
-                onSendSignal={onSendCoopSignal}
+
+                onCommand={onActivitySkill}
               />
             )}
 
@@ -263,9 +244,8 @@ export function InteractionModal({
                 myRole={myOnlineRole}
                 bothOnline={bothOnline}
                 soundEnabled={state.settings.soundEnabled}
-                onUpdateRelay={onUpdateLeafRelay}
-                onAdvanceCut={onAdvanceLeafCut}
-                onAdvanceFold={onAdvanceLeafFold}
+
+                onCommand={onActivitySkill}
               />
             )}
 
@@ -292,9 +272,8 @@ export function InteractionModal({
                 reducedMotion={reducedMotion}
                 soundEnabled={state.settings.soundEnabled}
                 onSetWish={onSetLanternWish}
-                onLightSide={onLightLanternSide}
-                onReadyRelease={onReadyReleaseLantern}
-                onCompleteRelease={onCompleteLanternRelease}
+
+                onCommand={onActivitySkill}
               />
             )}
 

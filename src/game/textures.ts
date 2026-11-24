@@ -24,7 +24,7 @@ export interface Character3DRig {
   activeRing: THREE.Mesh;
   nameSprite: THREE.Sprite;
   emoteSprite: THREE.Sprite;
-  portraitSprite: THREE.Sprite | null;
+  portraitFace: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial> | null;
   lastNameText: string;
   lastConfigKey: string;
   lastPortraitKey: string | null;
@@ -155,7 +155,7 @@ export function updateTextPillSprite(
   sprite.scale.copy(replacement.scale);
 }
 
-export function buildCharacter3DRig(profile: PlayerProfile): Character3DRig {
+export function buildCharacter3DRig(profile: PlayerProfile, onPortraitLoaded?: () => void): Character3DRig {
   const root = new THREE.Group();
   const bodyPivot = new THREE.Group();
   root.add(bodyPivot);
@@ -220,21 +220,22 @@ export function buildCharacter3DRig(profile: PlayerProfile): Character3DRig {
     activeRing,
     nameSprite,
     emoteSprite,
-    portraitSprite: null,
+    portraitFace: null,
     lastNameText: profile.name,
     lastConfigKey: '',
     lastPortraitKey: null,
     targetYaw: 0,
   };
 
-  syncCharacter3DRig(rig, profile, true);
+  syncCharacter3DRig(rig, profile, true, onPortraitLoaded);
   return rig;
 }
 
 export function syncCharacter3DRig(
   rig: Character3DRig,
   profile: PlayerProfile,
-  isActive: boolean
+  isActive: boolean,
+  onPortraitLoaded?: () => void
 ): void {
   rig.activeRing.visible = isActive;
 
@@ -257,6 +258,7 @@ export function syncCharacter3DRig(
   const configKey = `${gender}|${profile.customization.skinTone}|${profile.customization.hairStyle}|${profile.customization.hairColor}|${profile.customization.outfit}|${profile.customization.accessory}`;
   if (rig.lastConfigKey !== configKey) {
     rig.lastConfigKey = configKey;
+    rig.portraitFace?.removeFromParent();
     const oldGeometries = new Set<THREE.BufferGeometry>();
     const oldMaterials = new Set<THREE.Material>();
     rig.bodyPivot.traverse((child) => {
@@ -493,9 +495,10 @@ export function syncCharacter3DRig(
       pin.add(center);
       rig.bodyPivot.add(pin);
     }
+    if (rig.portraitFace) rig.bodyPivot.add(rig.portraitFace);
   }
 
-  // Sync the optional portrait medallion above the character.
+  // The face lives on the same pivot as the head and follows the character's yaw.
   const wantPortraitKey =
     profile.portrait.status === 'ready' && profile.portrait.dataUrl
       ? `${profile.id}:${profile.portrait.updatedAt ?? 'ready'}`
@@ -503,11 +506,12 @@ export function syncCharacter3DRig(
 
   if (rig.lastPortraitKey !== wantPortraitKey) {
     rig.lastPortraitKey = wantPortraitKey;
-    if (rig.portraitSprite) {
-      rig.root.remove(rig.portraitSprite);
-      rig.portraitSprite.material.map?.dispose();
-      rig.portraitSprite.material.dispose();
-      rig.portraitSprite = null;
+    if (rig.portraitFace) {
+      rig.portraitFace.removeFromParent();
+      rig.portraitFace.geometry.dispose();
+      rig.portraitFace.material.map?.dispose();
+      rig.portraitFace.material.dispose();
+      rig.portraitFace = null;
     }
 
     if (wantPortraitKey && profile.portrait.dataUrl) {
@@ -516,30 +520,37 @@ export function syncCharacter3DRig(
         if (rig.lastPortraitKey !== wantPortraitKey) return;
         const c = makeCanvas(128, 128);
         const ctx = c.getContext('2d');
-        if (ctx) {
-          ctx.save();
-          ctx.beginPath();
-          ctx.arc(64, 64, 58, 0, Math.PI * 2);
-          ctx.clip();
-          ctx.drawImage(img, 0, 0, 128, 128);
-          ctx.restore();
-          ctx.strokeStyle = '#FDE68A';
-          ctx.lineWidth = 6;
-          ctx.beginPath();
-          ctx.arc(64, 64, 58, 0, Math.PI * 2);
-          ctx.stroke();
+        if (!ctx) {
+          onPortraitLoaded?.();
+          return;
         }
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(64, 64, 58, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(img, 0, 0, 128, 128);
+        ctx.restore();
+        ctx.strokeStyle = '#FDE68A';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(64, 64, 58, 0, Math.PI * 2);
+        ctx.stroke();
         const tex = new THREE.CanvasTexture(c);
         tex.colorSpace = THREE.SRGBColorSpace;
-        const sp = new THREE.Sprite(
-          new THREE.SpriteMaterial({ map: tex, transparent: true })
+        const face = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.54, 0.54),
+          new THREE.MeshBasicMaterial({ map: tex, alphaTest: 0.12, toneMapped: false })
         );
-        sp.scale.set(0.68, 0.68, 1);
-        sp.position.set(0, 1.38, 0.22);
-        rig.root.add(sp);
-        rig.portraitSprite = sp;
+        face.name = 'portrait-face';
+        face.position.set(0, 1.34, 0.324);
+        rig.bodyPivot.add(face);
+        rig.portraitFace = face;
+        onPortraitLoaded?.();
       };
+      img.onerror = () => onPortraitLoaded?.();
       img.src = profile.portrait.dataUrl;
+    } else {
+      onPortraitLoaded?.();
     }
   }
 }
