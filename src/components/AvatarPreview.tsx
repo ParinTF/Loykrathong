@@ -7,7 +7,7 @@ import {
 } from '../domain/customizationCatalog';
 
 interface AvatarPreviewProps {
-  profile: PlayerProfile;
+  profile: Pick<PlayerProfile, 'id' | 'name' | 'portrait' | 'customization'>;
   size?: number;
   decorative?: boolean;
 }

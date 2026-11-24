@@ -40,8 +40,10 @@ export interface OnlineRoomCallbacks {
   onStatusChange: (status: RoomConnectionStatus, errorMessage: string | null) => void;
 }
 
-const CLIENT_ID_STORAGE_KEY = 'loykratong.online.clientId.v1';
 const ROOM_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+// Per-tab in-memory client ID (never shared via sessionStorage when duplicating tabs!)
+const TAB_CLIENT_ID = `lk-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
 
 export function generateInviteRoomCode(length = 6): string {
   let out = '';
@@ -78,16 +80,7 @@ export function buildRoomInviteUrl(roomCode: string): string {
 }
 
 export function getOrCreateClientId(): string {
-  if (typeof window === 'undefined') return 'ssr-client';
-  try {
-    const existing = sessionStorage.getItem(CLIENT_ID_STORAGE_KEY);
-    if (existing) return existing;
-    const generated = `lk-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
-    sessionStorage.setItem(CLIENT_ID_STORAGE_KEY, generated);
-    return generated;
-  } catch {
-    return `lk-${Math.random().toString(36).slice(2, 10)}`;
-  }
+  return TAB_CLIENT_ID;
 }
 
 export class OnlineRoomClient {
@@ -97,16 +90,23 @@ export class OnlineRoomClient {
   private intentionalClose = false;
   private roomCode = '';
   private preferredRole: PlayerId = 'p1';
+  private readonly clientId: string;
   private getProfile: () => PlayerProfile;
   private callbacks: OnlineRoomCallbacks;
   private lastMoveSentAt = 0;
+  private wsEndpointOverride?: string;
 
   constructor(
     getProfile: () => PlayerProfile,
-    callbacks: OnlineRoomCallbacks
+    callbacks: OnlineRoomCallbacks,
+    options?: { clientId?: string; wsEndpoint?: string }
   ) {
     this.getProfile = getProfile;
     this.callbacks = callbacks;
+    this.clientId =
+      options?.clientId ??
+      `lk-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
+    this.wsEndpointOverride = options?.wsEndpoint;
   }
 
   public connect(roomCode: string, preferredRole: PlayerId): void {
@@ -119,6 +119,17 @@ export class OnlineRoomClient {
       return;
     }
 
+    // If already connected or connecting to the exact same room & role, do nothing!
+    if (
+      this.ws &&
+      (this.ws.readyState === WebSocket.OPEN ||
+        this.ws.readyState === WebSocket.CONNECTING) &&
+      this.roomCode === normalized &&
+      this.preferredRole === preferredRole
+    ) {
+      return;
+    }
+
     this.disconnect();
     this.intentionalClose = false;
     this.roomCode = normalized;
@@ -126,21 +137,52 @@ export class OnlineRoomClient {
     this.openSocket(false);
   }
 
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
   private openSocket(isReconnect: boolean): void {
-    if (typeof window === 'undefined' || typeof WebSocket === 'undefined') {
-      this.callbacks.onStatusChange('error', 'เบราว์เซอร์นี้ไม่รองรับการเชื่อมต่อ WebSocket');
+    this.clearReconnectTimer();
+
+    if (typeof WebSocket === 'undefined') {
+      this.callbacks.onStatusChange(
+        'error',
+        'เบราว์เซอร์นี้ไม่รองรับการเชื่อมต่อ WebSocket'
+      );
       return;
     }
 
+    // Close any previous socket cleanly with handlers detached so its async close never triggers a zombie timer
+    if (this.ws) {
+      const stale = this.ws;
+      this.ws = null;
+      stale.onopen = null;
+      stale.onmessage = null;
+      stale.onerror = null;
+      stale.onclose = null;
+      try {
+        stale.close();
+      } catch {
+        // ignore
+      }
+    }
+
     this.callbacks.onStatusChange('connecting', null);
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${proto}//${window.location.host}/ws`;
+    const wsUrl =
+      this.wsEndpointOverride ??
+      `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
 
     let socket: WebSocket;
     try {
       socket = new WebSocket(wsUrl);
     } catch {
-      this.callbacks.onStatusChange('error', 'ไม่สามารถเปิดช่องทางเชื่อมต่อห้องออนไลน์ได้');
+      this.callbacks.onStatusChange(
+        'error',
+        'ไม่สามารถเปิดช่องทางเชื่อมต่อห้องออนไลน์ได้'
+      );
       return;
     }
 
@@ -153,7 +195,7 @@ export class OnlineRoomClient {
           type: 'join_room',
           roomCode: this.roomCode,
           preferredRole: this.preferredRole,
-          clientId: getOrCreateClientId(),
+          clientId: this.clientId,
           profile: this.getProfile(),
           preserveRoomPosition: isReconnect,
         })
@@ -214,14 +256,16 @@ export class OnlineRoomClient {
     };
 
     socket.onerror = () => {
-      // Handled on close for reconnect or error surfacing
+      // Handled on close
     };
 
     socket.onclose = () => {
-      this.stopHeartbeat();
-      if (this.ws === socket) {
-        this.ws = null;
+      // CRITICAL: Ignore async close events from superseded sockets!
+      if (this.ws !== socket) {
+        return;
       }
+      this.stopHeartbeat();
+      this.ws = null;
       if (this.intentionalClose) {
         return;
       }
@@ -229,26 +273,27 @@ export class OnlineRoomClient {
         'connecting',
         'สัญญาณสะดุด กำลังเชื่อมต่อกลับเข้าห้องเดิมอัตโนมัติ...'
       );
-      this.reconnectTimer = window.setTimeout(() => {
+      this.clearReconnectTimer();
+      this.reconnectTimer = setTimeout(() => {
         if (!this.intentionalClose && this.roomCode) {
           this.openSocket(true);
         }
-      }, 1500);
+      }, 1800) as unknown as number;
     };
   }
 
   private startHeartbeat(): void {
     this.stopHeartbeat();
-    this.pingTimer = window.setInterval(() => {
+    this.pingTimer = setInterval(() => {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         this.ws.send(JSON.stringify({ type: 'ping' }));
       }
-    }, 20_000);
+    }, 20_000) as unknown as number;
   }
 
   private stopHeartbeat(): void {
     if (this.pingTimer !== null) {
-      window.clearInterval(this.pingTimer);
+      clearInterval(this.pingTimer);
       this.pingTimer = null;
     }
   }
@@ -308,17 +353,19 @@ export class OnlineRoomClient {
   public disconnect(): void {
     this.intentionalClose = true;
     this.stopHeartbeat();
-    if (this.reconnectTimer !== null) {
-      window.clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
+    this.clearReconnectTimer();
     if (this.ws) {
+      const active = this.ws;
+      this.ws = null;
+      active.onopen = null;
+      active.onmessage = null;
+      active.onerror = null;
+      active.onclose = null;
       try {
-        this.ws.close();
+        active.close();
       } catch {
         // ignore
       }
-      this.ws = null;
     }
   }
 }

@@ -8,6 +8,7 @@ import { WebSocket } from 'ws';
 import { createRoomHub } from '../server/roomHub.mjs';
 import { InteractionModal } from '../src/components/InteractionModal';
 import { createInitialGameState, gameReducer } from '../src/domain/reducer';
+import { OnlineRoomClient } from '../src/online/roomClient';
 
 function ModalCoopHarness() {
   const [state, setState] = useState(() => {
@@ -225,6 +226,62 @@ describe('2-Player Cooperative Challenges & Real-Time Online Room Hub', () => {
     } finally {
       p1Ws.close();
       p2Ws.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('keeps the replacement connection open when the previous socket closes', async () => {
+    const server = createServer();
+    const hub = createRoomHub();
+    hub.attachToServer(server);
+
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const wsEndpoint = `ws://127.0.0.1:${port}/ws`;
+
+    const statusHistory: string[] = [];
+    let joinedCount = 0;
+    const state = createInitialGameState();
+
+    const origWs = globalThis.WebSocket;
+    globalThis.WebSocket = WebSocket as unknown as typeof globalThis.WebSocket;
+
+    const client = new OnlineRoomClient(
+      () => state.players.p1,
+      {
+        onJoined: () => {
+          joinedCount += 1;
+        },
+        onSnapshot: () => {},
+        onPeerMoved: () => {},
+        onPeerProfile: () => {},
+        onEmote: () => {},
+        onStatusChange: (st) => {
+          statusHistory.push(st);
+        },
+      },
+      { wsEndpoint }
+    );
+
+    try {
+      client.connect('STABLE1', 'p1');
+      await vi.waitFor(() => expect(joinedCount).toBe(1));
+      client.connect('STABLE1', 'p2');
+      await vi.waitFor(() => expect(joinedCount).toBe(2));
+
+      // A close from the previous socket used to schedule another connection.
+      await new Promise((resolve) => setTimeout(resolve, 2300));
+
+      expect(joinedCount).toBe(2);
+      expect(statusHistory).toEqual([
+        'connecting',
+        'connected',
+        'connecting',
+        'connected',
+      ]);
+    } finally {
+      client.disconnect();
+      globalThis.WebSocket = origWs;
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });

@@ -23,6 +23,7 @@ const MIME_TYPES = {
   '.gif': 'image/gif',
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
+  '.glb': 'model/gltf-binary',
 };
 
 const hub = createRoomHub();

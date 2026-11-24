@@ -366,14 +366,18 @@ export function createRoomHub() {
           const occ = getOccupancy(room);
 
           let role = null;
-          if (clientId && room.clientIds.p1 === clientId) {
+          if (clientId && room.clientIds.p1 === clientId && !occ.p1) {
             role = 'p1';
-          } else if (clientId && room.clientIds.p2 === clientId) {
+          } else if (clientId && room.clientIds.p2 === clientId && !occ.p2) {
             role = 'p2';
           } else if (!occ[preferred]) {
             role = preferred;
           } else if (!occ[other]) {
             role = other;
+          } else if (clientId && room.clientIds.p1 === clientId) {
+            role = 'p1';
+          } else if (clientId && room.clientIds.p2 === clientId) {
+            role = 'p2';
           }
 
           if (!role) {

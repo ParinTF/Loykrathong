@@ -138,13 +138,24 @@ export interface Rect {
 }
 
 export type ReducedMotionPreference = 'system' | 'reduce' | 'no-preference';
+export const GRAPHICS_QUALITIES = ['auto', 'low', 'medium', 'high', 'ultra'] as const;
+export type GraphicsQuality = (typeof GRAPHICS_QUALITIES)[number];
 
 export interface AppSettings {
   activePlayer: PlayerId;
   followPartner: boolean;
   reducedMotionOverride: ReducedMotionPreference;
   soundEnabled: boolean;
+  graphicsQuality: GraphicsQuality;
+  musicEnabled: boolean;
+  highContrast: boolean;
+  showTouchControls: boolean;
 }
+
+export type PresentationSettings = Pick<
+  AppSettings,
+  'graphicsQuality' | 'musicEnabled' | 'highContrast' | 'showTouchControls'
+>;
 
 export interface SharedRoomQuestState {
   inventory: Record<MaterialId, boolean>;
@@ -215,6 +226,7 @@ export type GameAction =
   | { type: 'SET_FOLLOW_PARTNER'; enabled: boolean }
   | { type: 'SET_REDUCED_MOTION'; mode: ReducedMotionPreference }
   | { type: 'TOGGLE_SOUND' }
+  | { type: 'SET_PRESENTATION_SETTINGS'; patch: Partial<PresentationSettings> }
   | {
       type: 'MOVE_PLAYER';
       playerId: PlayerId;

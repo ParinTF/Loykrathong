@@ -49,11 +49,18 @@ describe('GameShell UI, Accessibility & Minigame Flow', () => {
     fireEvent.click(screen.getByRole('button', { name: /เข้าสู่งานลอยกระทงคู่กัน/i }));
 
     expect(await screen.findByText('จันทร์เจ้า')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /โต้ตอบ:/i })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'สลับเป็นปุ่มทิศทาง' }));
     expect(screen.getByRole('button', { name: /เดินขึ้น/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /รีเซ็ต/i })).toBeInTheDocument();
 
     // Reset confirmation modal
-    fireEvent.click(screen.getByRole('button', { name: /รีเซ็ต/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'ตั้งค่า' }));
+    expect(screen.getByRole('dialog', { name: 'ตั้งค่า' })).toBeInTheDocument();
+    const qualityPicker = screen.getByRole('combobox', { name: 'คุณภาพกราฟิก' });
+    expect(qualityPicker).toHaveValue('auto');
+    fireEvent.change(qualityPicker, { target: { value: 'low' } });
+    expect(qualityPicker).toHaveValue('low');
+    fireEvent.click(screen.getByRole('button', { name: 'รีเซ็ตข้อมูลเกม' }));
     expect(screen.getByText(/ยืนยันการรีเซ็ตข้อมูลทั้งหมด/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /ยืนยันรีเซ็ตทั้งหมด/i }));
 

@@ -1,197 +1,106 @@
-import type { Direction, PlayMode, WorldSpot } from '../domain/types';
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+
+import { memo, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import type { Direction } from '../domain/types';
+import { HudIcon, HudIconButton } from './hud/HudPrimitives';
 
 interface TouchControlsProps {
   activePlayerName: string;
-  playMode?: PlayMode;
-  nearbySpot: WorldSpot | null;
+  alwaysVisible: boolean;
   onVectorChange: (vx: number, vy: number) => void;
   onNudgeStep: (dx: number, dy: number, facing: Direction) => void;
-  onInteract: () => void;
 }
 
-const JOYSTICK_RADIUS = 40;
+const directions = [
+  { facing: 'up', label: 'เดินขึ้น', x: 0, y: -1 },
+  { facing: 'left', label: 'เดินซ้าย', x: -1, y: 0 },
+  { facing: 'right', label: 'เดินขวา', x: 1, y: 0 },
+  { facing: 'down', label: 'เดินลง', x: 0, y: 1 },
+] as const;
 
-export function TouchControls({
-  activePlayerName,
-  playMode = 'local',
-  nearbySpot,
-  onVectorChange,
-  onNudgeStep,
-  onInteract,
+export const TouchControls = memo(function TouchControls({
+  activePlayerName, alwaysVisible, onVectorChange, onNudgeStep,
 }: TouchControlsProps) {
-  const padRef = useRef<HTMLDivElement>(null);
-  const pointerIdRef = useRef<number | null>(null);
-  const holdTimerRef = useRef<number | null>(null);
-  const [knob, setKnob] = useState({ x: 0, y: 0 });
-  const [mobilePadMode, setMobilePadMode] = useState<'joystick' | 'dpad'>('joystick');
+  const [mode, setMode] = useState<'joystick' | 'dpad'>('joystick');
+  const knob = useRef<HTMLSpanElement>(null);
+  const pointer = useRef<number | null>(null);
+  const center = useRef({ x: 0, y: 0, radius: 34 });
+  const holdTimer = useRef<number | undefined>(undefined);
 
-  const updateFromPointer = (clientX: number, clientY: number) => {
-    const el = padRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    const rawX = clientX - cx;
-    const rawY = clientY - cy;
-    const dist = Math.hypot(rawX, rawY);
-    const clamped = Math.min(dist, JOYSTICK_RADIUS);
-    const angle = Math.atan2(rawY, rawX);
-    const kx = dist > 0 ? Math.cos(angle) * clamped : 0;
-    const ky = dist > 0 ? Math.sin(angle) * clamped : 0;
-    setKnob({ x: kx, y: ky });
-    onVectorChange(kx / JOYSTICK_RADIUS, ky / JOYSTICK_RADIUS);
-  };
-
-  const resetStick = () => {
-    pointerIdRef.current = null;
-    setKnob({ x: 0, y: 0 });
+  useEffect(() => () => {
+    window.clearInterval(holdTimer.current);
     onVectorChange(0, 0);
-  };
+  }, [onVectorChange]);
 
-  const handlePadDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    const active = document.activeElement as HTMLElement | null;
-    if (
-      active &&
-      (active.tagName === 'INPUT' ||
-        active.tagName === 'TEXTAREA' ||
-        active.tagName === 'SELECT')
-    ) {
-      active.blur();
+  function move(clientX: number, clientY: number) {
+    const { x, y, radius } = center.current;
+    const dx = clientX - x;
+    const dy = clientY - y;
+    const scale = radius / Math.max(radius, Math.hypot(dx, dy));
+    const kx = dx * scale;
+    const ky = dy * scale;
+    if (knob.current) knob.current.style.translate = `${kx}px ${ky}px`;
+    onVectorChange(kx / radius, ky / radius);
+  }
+
+  function startStick(event: ReactPointerEvent<HTMLDivElement>) {
+    if (pointer.current !== null) return;
+    const frame = event.currentTarget.getBoundingClientRect();
+    center.current = { x: frame.left + frame.width / 2, y: frame.top + frame.height / 2, radius: Math.max(28, frame.width * 0.35) };
+    pointer.current = event.pointerId;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    if (document.activeElement instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
+      document.activeElement.blur();
     }
-    pointerIdRef.current = e.pointerId;
-    e.currentTarget.setPointerCapture?.(e.pointerId);
-    updateFromPointer(e.clientX, e.clientY);
-  };
+    move(event.clientX, event.clientY);
+  }
 
-  const handlePadMove = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (pointerIdRef.current !== e.pointerId) return;
-    updateFromPointer(e.clientX, e.clientY);
-  };
+  function stopStick(event: ReactPointerEvent<HTMLDivElement>) {
+    if (pointer.current !== event.pointerId) return;
+    pointer.current = null;
+    if (knob.current) knob.current.style.translate = '0px 0px';
+    onVectorChange(0, 0);
+  }
 
-  const startHold = (dx: number, dy: number, facing: Direction) => {
+  function stopHold() {
+    window.clearInterval(holdTimer.current);
+    holdTimer.current = undefined;
+    onVectorChange(0, 0);
+  }
+
+  function startHold(dx: number, dy: number, facing: Direction) {
+    window.clearInterval(holdTimer.current);
     onVectorChange(dx, dy);
     onNudgeStep(dx * 14, dy * 14, facing);
-    if (holdTimerRef.current) window.clearInterval(holdTimerRef.current);
-    holdTimerRef.current = window.setInterval(() => {
-      onNudgeStep(dx * 10, dy * 10, facing);
-    }, 80);
-  };
-
-  const stopHold = () => {
-    if (holdTimerRef.current) {
-      window.clearInterval(holdTimerRef.current);
-      holdTimerRef.current = null;
-    }
-    onVectorChange(0, 0);
-  };
+    holdTimer.current = window.setInterval(() => onNudgeStep(dx * 10, dy * 10, facing), 80);
+  }
 
   return (
-    <div
-      className="touch-controls"
-      data-mobile-pad={mobilePadMode}
-      aria-label="แผงควบคุมการเดินและโต้ตอบ"
-    >
-      <div className="touch-move-cluster">
-        <div
-          ref={padRef}
-          className="joystick-pad"
-          aria-label={`จอยสติ๊กสำหรับเดิน (${activePlayerName})`}
-          onPointerDown={handlePadDown}
-          onPointerMove={handlePadMove}
-          onPointerUp={resetStick}
-          onPointerCancel={resetStick}
-          onLostPointerCapture={resetStick}
-        >
-          <span className="joystick-compass joystick-compass--n" aria-hidden="true" />
-          <span className="joystick-compass joystick-compass--s" aria-hidden="true" />
-          <span className="joystick-compass joystick-compass--w" aria-hidden="true" />
-          <span className="joystick-compass joystick-compass--e" aria-hidden="true" />
-          <div
-            className="joystick-knob"
-            style={{
-              transform: `translate(${knob.x}px, ${knob.y}px)`,
-            }}
-          />
+    <div className="hud-touch" data-always-visible={alwaysVisible} role="group" aria-label="การเดินบนหน้าจอ">
+      {mode === 'joystick' ? (
+        <div className="hud-stick" aria-label={'จอยสติ๊กเดิน ' + activePlayerName}
+          onPointerDown={startStick} onPointerMove={(event) => {
+            if (pointer.current === event.pointerId) move(event.clientX, event.clientY);
+          }} onPointerUp={stopStick} onPointerCancel={stopStick} onLostPointerCapture={stopStick}>
+          <HudIcon name="compass" />
+          <span ref={knob} className="hud-stick__knob" />
         </div>
-
-        <div className="dpad-grid" role="group" aria-label="ปุ่มทิศทางแบบแตะ">
-          <button
-            type="button"
-            className="dpad-btn dpad-btn--up"
-            aria-label="เดินขึ้น"
-            onPointerDown={() => startHold(0, -1, 'up')}
-            onPointerUp={stopHold}
-            onPointerLeave={stopHold}
-            onPointerCancel={stopHold}
-            onClick={() => onNudgeStep(0, -24, 'up')}
-          >
-            ▲
-          </button>
-          <button
-            type="button"
-            className="dpad-btn dpad-btn--left"
-            aria-label="เดินซ้าย"
-            onPointerDown={() => startHold(-1, 0, 'left')}
-            onPointerUp={stopHold}
-            onPointerLeave={stopHold}
-            onPointerCancel={stopHold}
-            onClick={() => onNudgeStep(-24, 0, 'left')}
-          >
-            ◀
-          </button>
-          <button
-            type="button"
-            className="dpad-btn dpad-btn--right"
-            aria-label="เดินขวา"
-            onPointerDown={() => startHold(1, 0, 'right')}
-            onPointerUp={stopHold}
-            onPointerLeave={stopHold}
-            onPointerCancel={stopHold}
-            onClick={() => onNudgeStep(24, 0, 'right')}
-          >
-            ▶
-          </button>
-          <button
-            type="button"
-            className="dpad-btn dpad-btn--down"
-            aria-label="เดินลง"
-            onPointerDown={() => startHold(0, 1, 'down')}
-            onPointerUp={stopHold}
-            onPointerLeave={stopHold}
-            onPointerCancel={stopHold}
-            onClick={() => onNudgeStep(0, 24, 'down')}
-          >
-            ▼
-          </button>
+      ) : (
+        <div className="hud-dpad">
+          {directions.map(({ facing, label, x, y }) => (
+            <HudIconButton key={facing} icon={facing} label={label} className={`hud-dpad__${facing}`}
+              onPointerDown={() => startHold(x, y, facing)} onPointerUp={stopHold}
+              onPointerLeave={stopHold} onPointerCancel={stopHold}
+              onClick={() => onNudgeStep(x * 24, y * 24, facing)} />
+          ))}
         </div>
-
-        <button
-          type="button"
-          className="btn btn--hud pad-mode-toggle"
-          onClick={() =>
-            setMobilePadMode((m) => (m === 'joystick' ? 'dpad' : 'joystick'))
-          }
-        >
-          {mobilePadMode === 'joystick' ? 'สลับเป็นปุ่มกด' : 'สลับเป็นจอยสติ๊ก'}
-        </button>
-      </div>
-
-      <div className="touch-interact-cluster">
-        <p className="keyboard-hint">
-          {playMode === 'online'
-            ? 'WASD/ลูกศร เดิน · ลากจอ/Q·R หมุนกล้อง 3D · V มุมกล้อง · E โต้ตอบ'
-            : 'WASD (P1) · ลูกศร (P2) · ลากจอ/Q·R หมุนกล้อง 3D · E โต้ตอบ'}
-        </p>
-        <button
-          type="button"
-          className={`btn btn--interact ${nearbySpot ? 'is-ready' : ''}`}
-          disabled={!nearbySpot}
-          onClick={onInteract}
-        >
-          {nearbySpot ? `โต้ตอบ: ${nearbySpot.title}` : 'เดินเข้าใกล้จุดเรืองแสง'}
-        </button>
-      </div>
+      )}
+      <HudIconButton icon={mode === 'joystick' ? 'pad' : 'compass'} className="hud-touch__toggle"
+        label={mode === 'joystick' ? 'สลับเป็นปุ่มทิศทาง' : 'สลับเป็นจอยสติ๊ก'}
+        onClick={() => {
+          stopHold();
+          pointer.current = null;
+          setMode((value) => value === 'joystick' ? 'dpad' : 'joystick');
+        }} />
     </div>
   );
-}
+});

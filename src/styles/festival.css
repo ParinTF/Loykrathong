@@ -462,140 +462,6 @@
     overflow: hidden;
   }
 
-  .hud-header {
-    background: rgba(10, 15, 36, 0.95);
-    border-bottom: 1px solid var(--border-subtle);
-    padding: 0.5rem 0.65rem;
-    padding-top: max(0.5rem, env(safe-area-inset-top, 0px));
-    display: flex;
-    flex-direction: column;
-    gap: 0.45rem;
-    z-index: 20;
-  }
-
-  .hud-top-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-  }
-
-  .hud-players {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.45rem;
-  }
-
-  .hud-player-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.45rem;
-    min-block-size: var(--target-size);
-    padding: 0.25rem 0.6rem;
-    border-radius: 999px;
-    border: 1.5px solid var(--border-subtle);
-    background: var(--surface-card);
-    cursor: pointer;
-    text-align: left;
-  }
-
-  .hud-player-btn.is-active {
-    border-color: var(--accent-gold-bright);
-    background: var(--surface-soft);
-  }
-
-  .hud-player-meta {
-    display: flex;
-    flex-direction: column;
-    line-height: 1.15;
-  }
-
-  .hud-player-name {
-    font-size: 0.88rem;
-    font-weight: 700;
-  }
-
-  .hud-player-tag {
-    font-size: 0.74rem;
-    color: var(--accent-gold-bright);
-  }
-
-  .hud-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-  }
-
-  .btn--hud {
-    padding: 0.35rem 0.65rem;
-    font-size: 0.84rem;
-  }
-
-  .btn--hud.is-on {
-    border-color: var(--accent-river);
-    color: #CCFBF1;
-  }
-
-  .hud-status-strip {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .hud-stage-pill {
-    background: rgba(245, 158, 11, 0.2);
-    color: var(--accent-gold-bright);
-    border: 1px solid var(--border-strong);
-    border-radius: 999px;
-    padding: 0.2rem 0.65rem;
-    font-size: 0.82rem;
-    font-weight: 700;
-  }
-
-  .hud-event-log {
-    color: var(--text-muted);
-    font-size: 0.85rem;
-    min-inline-size: 0;
-    flex: 1;
-  }
-
-  .quest-drawer {
-    background: var(--surface-card);
-    border: 1px solid var(--border-subtle);
-    border-radius: 0.75rem;
-    padding: 0.75rem;
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
-    gap: 0.75rem;
-    max-block-size: 40dvh;
-    overflow-y: auto;
-  }
-
-  .quest-drawer__title {
-    font-size: 0.95rem;
-    color: var(--accent-gold-bright);
-    margin-block-end: 0.3rem;
-  }
-
-  .quest-list {
-    list-style: none;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.28rem;
-    font-size: 0.86rem;
-  }
-
-  .quest-list li.is-done {
-    color: var(--success-text);
-  }
-
-  .quest-hint {
-    color: var(--text-muted);
-  }
-
   .world-stage-wrap {
     position: relative;
     flex: 1;
@@ -607,140 +473,6 @@
   .phaser-stage {
     inline-size: 100%;
     block-size: 100%;
-  }
-
-  /* Touch Controls */
-  .touch-controls {
-    position: absolute;
-    inset-block-end: max(0.65rem, env(safe-area-inset-bottom, 0px));
-    inset-inline: max(0.65rem, env(safe-area-inset-left, 0px));
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 0.65rem;
-    pointer-events: none;
-    z-index: 15;
-  }
-
-  .touch-move-cluster,
-  .touch-interact-cluster {
-    pointer-events: auto;
-    display: flex;
-    align-items: flex-end;
-    gap: 0.55rem;
-  }
-
-  .touch-interact-cluster {
-    flex-direction: column;
-    align-items: flex-end;
-  }
-
-  .joystick-pad {
-    position: relative;
-    inline-size: 108px;
-    block-size: 108px;
-    border-radius: 999px;
-    background: radial-gradient(circle, rgba(34, 47, 89, 0.9) 0%, rgba(15, 23, 42, 0.88) 100%);
-    border: 2px solid var(--border-strong);
-    box-shadow: 0 6px 20px rgba(2, 6, 23, 0.55);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    touch-action: none;
-    user-select: none;
-  }
-
-  .joystick-compass {
-    position: absolute;
-    inline-size: 6px;
-    block-size: 6px;
-    border-radius: 999px;
-    background: rgba(253, 230, 138, 0.45);
-    pointer-events: none;
-  }
-  .joystick-compass--n { inset-block-start: 8px; }
-  .joystick-compass--s { inset-block-end: 8px; }
-  .joystick-compass--w { inset-inline-start: 8px; }
-  .joystick-compass--e { inset-inline-end: 8px; }
-
-  .joystick-knob {
-    inline-size: 40px;
-    block-size: 40px;
-    border-radius: 999px;
-    background: radial-gradient(circle at 35% 35%, #FDE68A, #D97706);
-    border: 2px solid #FFFBEB;
-  }
-
-  .dpad-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 44px);
-    grid-template-rows: repeat(3, 44px);
-    gap: 4px;
-  }
-
-  .dpad-btn {
-    min-block-size: 44px;
-    min-inline-size: 44px;
-    border-radius: 0.55rem;
-    border: 1.5px solid var(--border-strong);
-    background: rgba(19, 27, 54, 0.86);
-    color: var(--text-primary);
-    font-weight: 700;
-    cursor: pointer;
-    touch-action: manipulation;
-  }
-
-  .dpad-btn--up { grid-column: 2; grid-row: 1; }
-  .dpad-btn--left { grid-column: 1; grid-row: 2; }
-  .dpad-btn--right { grid-column: 3; grid-row: 2; }
-  .dpad-btn--down { grid-column: 2; grid-row: 3; }
-
-  .pad-mode-toggle {
-    display: none;
-  }
-
-  @media (max-width: 539px) {
-    .pad-mode-toggle {
-      display: inline-flex;
-      font-size: 0.78rem;
-      padding: 0.35rem 0.55rem;
-    }
-    .touch-controls[data-mobile-pad="joystick"] .dpad-grid {
-      display: none;
-    }
-    .touch-controls[data-mobile-pad="dpad"] .joystick-pad {
-      display: none;
-    }
-  }
-
-  .keyboard-hint {
-    background: rgba(10, 15, 36, 0.84);
-    color: var(--text-muted);
-    padding: 0.25rem 0.6rem;
-    border-radius: 0.5rem;
-    font-size: 0.76rem;
-    display: none;
-  }
-
-  @media (min-width: 768px) {
-    .keyboard-hint {
-      display: block;
-    }
-  }
-
-  .btn--interact {
-    min-block-size: 52px;
-    padding: 0.65rem 1rem;
-    max-inline-size: 13rem;
-    font-size: 0.92rem;
-    background: rgba(19, 27, 54, 0.92);
-  }
-
-  .btn--interact.is-ready {
-    background: var(--accent-gold);
-    color: #0A0F24;
-    border-color: #FFFBEB;
   }
 
   /* Native Modal Dialogs */
@@ -1346,17 +1078,6 @@
     background: rgba(245, 158, 11, 0.2);
     color: var(--accent-gold-bright);
     border: 1px solid var(--accent-gold-bright);
-  }
-
-  .hud-emote-bar {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem;
-  }
-
-  .hud-emote-btn {
-    padding: 0.25rem 0.5rem;
-    font-size: 1.05rem;
   }
 
   /* Upgraded Arcade Minigames (Stream Catcher, Pendulum Stacker, Candle Orbs) */
@@ -2229,12 +1950,9 @@
   @media (forced-colors: active) {
     .btn,
     .setup-card,
-    .hud-header,
     .festival-dialog,
     .swatch-option,
-    .chip-option,
-    .joystick-pad,
-    .dpad-btn {
+    .chip-option {
       border: 2px solid ButtonText;
       background: Canvas;
       color: CanvasText;
@@ -2242,8 +1960,7 @@
 
     .btn--primary,
     .swatch-option:has(input:checked),
-    .chip-option:has(input:checked),
-    .hud-player-btn.is-active {
+    .chip-option:has(input:checked) {
       border: 3px solid Highlight;
     }
   }

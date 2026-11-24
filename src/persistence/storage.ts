@@ -1,4 +1,5 @@
 import { createInitialGameState } from '../domain/reducer';
+import { normalizeGraphicsQuality } from '../game/graphics';
 import type { GameState, PlayerId, PlayerPortrait } from '../domain/types';
 
 export const STORAGE_KEY = 'loykratong.couple.state.v1';
@@ -442,7 +443,14 @@ export async function loadPersistedState(): Promise<GameState | null> {
     const merged: GameState = {
       ...base,
       ...parsed,
-      settings: { ...base.settings, ...(parsed.settings ?? {}) },
+      settings: {
+        ...base.settings,
+        ...(parsed.settings ?? {}),
+        graphicsQuality: normalizeGraphicsQuality(parsed.settings?.graphicsQuality),
+        musicEnabled: parsed.settings?.musicEnabled === true,
+        highContrast: parsed.settings?.highContrast === true,
+        showTouchControls: parsed.settings?.showTouchControls === true,
+      },
       inventory: { ...base.inventory, ...(parsed.inventory ?? {}) },
       contributedBy: { ...base.contributedBy, ...(parsed.contributedBy ?? {}) },
       minigames: {

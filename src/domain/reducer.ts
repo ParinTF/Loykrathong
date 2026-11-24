@@ -103,6 +103,10 @@ export function createInitialGameState(): GameState {
       followPartner: true,
       reducedMotionOverride: 'system',
       soundEnabled: true,
+      graphicsQuality: 'auto',
+      musicEnabled: false,
+      highContrast: false,
+      showTouchControls: false,
     },
     inventory: {
       'banana-leaf': false,
@@ -161,7 +165,9 @@ export function canReleaseKrathong(state: GameState): boolean {
   );
 }
 
-export function getCoupleProgressPercent(state: GameState): number {
+export function getCoupleProgressPercent(
+  state: Pick<GameState, 'inventory' | 'minigames' | 'krathongCrafted' | 'releasedKrathongs'>
+): number {
   const matCount = countCollectedMaterials(state.inventory);
   let score = matCount * 15; // 0..45
   if (state.minigames.recipe.status === 'passed') score += 10;
@@ -429,6 +435,9 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
           soundEnabled: !state.settings.soundEnabled,
         },
       };
+
+    case 'SET_PRESENTATION_SETTINGS':
+      return { ...state, settings: { ...state.settings, ...action.patch } };
 
     case 'MOVE_PLAYER': {
       const mover = state.players[action.playerId];

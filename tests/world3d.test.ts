@@ -1,17 +1,17 @@
+import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { describe, expect, it, vi } from 'vitest';
 import { createInitialGameState } from '../src/domain/reducer';
 import { FestivalScene } from '../src/game/FestivalScene';
-import {
-  buildCharacter3DRig,
-  buildKrathong3DGroup,
-  createFestival3DTextures,
-} from '../src/game/textures';
+import { FestivalAssets, type FestivalModel } from '../src/game/festival/assets';
+import { createOffering } from '../src/game/festival/offerings';
+import { buildCharacter3DRig } from '../src/game/textures';
 
 describe('Three.js 3D Festival World, Avatars, Krathongs & Camera Math', () => {
-  it('constructs 3D couple character rigs and 3D krathong meshes with distinct tiers', () => {
+  it('constructs both character rigs and loads the Blender offerings with distinct quality tiers', async () => {
     const state = createInitialGameState();
-    const textures = createFestival3DTextures();
 
     const p1Rig = buildCharacter3DRig(state.players.p1);
     const p2Rig = buildCharacter3DRig(state.players.p2);
@@ -19,19 +19,22 @@ describe('Three.js 3D Festival World, Avatars, Krathongs & Camera Math', () => {
     expect(p2Rig.root).toBeInstanceOf(THREE.Group);
     expect(p1Rig.bodyPivot.children.length).toBeGreaterThan(6);
 
-    const classicKrathong = buildKrathong3DGroup(
-      state.krathongDesign,
-      'classic',
-      textures.goldGlow
-    );
-    const celestialKrathong = buildKrathong3DGroup(
-      state.krathongDesign,
-      'celestial',
-      textures.goldGlow
-    );
-    expect(celestialKrathong.children.length).toBeGreaterThan(
-      classicKrathong.children.length
-    );
+    const glb = readFileSync('public/models/festival/offerings.glb');
+    const data = new ArrayBuffer(glb.byteLength);
+    new Uint8Array(data).set(glb);
+    const { scene } = await new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).parseAsync(data, '');
+    const parts = new Map<FestivalModel, THREE.Object3D>();
+    for (const name of ['BananaKrathong', 'CoconutKrathong', 'HeartKrathong', 'LotusCrown', 'MarigoldCrown', 'RoseCrown'] as const) {
+      const object = scene.getObjectByName(name);
+      expect(object).toBeDefined();
+      if (object) parts.set(name, object);
+    }
+    const assets = new FestivalAssets(parts);
+    const classic = createOffering(assets, state.krathongDesign, 'classic');
+    const celestial = createOffering(assets, state.krathongDesign, 'celestial');
+    expect(celestial.group.children.length).toBeGreaterThan(classic.group.children.length);
+    expect(celestial.group.scale.x).toBeGreaterThan(classic.group.scale.x);
+    expect(new THREE.Box3().setFromObject(classic.group).getSize(new THREE.Vector3()).x).toBeGreaterThan(0.9);
   });
 
   it('cycles 3D camera presets and transforms movement vectors relative to 360-degree camera orbit', () => {

@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   createInitialGameState,
   extractSharedQuestState,
   gameReducer,
+  getCoupleProgressPercent,
 } from '../domain/reducer';
 import { getSpotById, isPositionWalkable } from '../domain/worldMap';
 import type {
@@ -15,7 +16,7 @@ import type {
   PlayerId,
 } from '../domain/types';
 import type { CameraPreset, FestivalScene } from '../game/FestivalScene';
-import { playChime } from '../game/sound';
+import { playChime, startFestivalMusic } from '../game/sound';
 import {
   OnlineRoomClient,
   generateInviteRoomCode,
@@ -29,7 +30,7 @@ import {
   loadPersistedState,
   savePersistedState,
 } from '../persistence/storage';
-import { FestivalHud } from './FestivalHud';
+import { FestivalHud, type HudActions, type HudOverlay, type HudProfile } from './FestivalHud';
 import { InteractionModal } from './InteractionModal';
 import { SetupScreen, type WorldAssetStatus } from './SetupScreen';
 import { TouchControls } from './TouchControls';
@@ -46,7 +47,10 @@ export function preloadDefaultWorldModules(): Promise<WorldModulesTuple> {
     defaultWorldModulesPromise = Promise.all([
       import('three'),
       import('../game/FestivalScene'),
-    ]).catch((error) => {
+    ]).then(async (modules) => {
+      await modules[1].preloadFestivalModels();
+      return modules;
+    }).catch((error) => {
       defaultWorldModulesPromise = null;
       throw error;
     });
@@ -91,7 +95,12 @@ export function GameShell({
   disablePhaser = false,
   loadWorldModules = preloadDefaultWorldModules,
 }: GameShellProps) {
-  const initialInviteCode = readInitialRoomFromUrl();
+  // Capture initial URL invite code ONLY once on first mount so later replaceState('?room=...')
+  // never re-triggers the auto-join effect or switches P1 into P2!
+  const [initialInviteCode] = useState<string | null>(() =>
+    readInitialRoomFromUrl()
+  );
+  const didAutoJoinInviteRef = useRef(false);
 
   const [state, dispatch] = useReducer(
     gameReducer,
@@ -101,6 +110,8 @@ export function GameShell({
   const [hydrated, setHydrated] = useState(false);
   const [openSpotId, setOpenSpotId] = useState<string | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
+  const [hudOverlay, setHudOverlay] = useState<HudOverlay>(null);
+  const setupTarget = useRef<'online-room' | 'couple-studio' | null>(null);
 
   // Online Couple Room state
   const [playMode, setPlayMode] = useState<PlayMode>(() =>
@@ -271,15 +282,25 @@ export function GameShell({
     setRoomStatus('disconnected');
     setRoomError(null);
     setOccupancy({ p1: false, p2: false });
+    try {
+      const nextUrl = new URL(window.location.href);
+      if (nextUrl.searchParams.has('room')) {
+        nextUrl.searchParams.delete('room');
+        window.history.replaceState({}, '', nextUrl.toString());
+      }
+    } catch {
+      // ignore history update in test environments
+    }
   }, []);
 
-  // Auto-join when opened via a partner invite URL (?room=XXXXXX) once local profile is hydrated
+  // Auto-join ONCE when opened via a partner invite URL (?room=XXXXXX) after hydration
   useEffect(() => {
-    if (!hydrated || !initialInviteCode) return undefined;
+    if (!hydrated || !initialInviteCode || didAutoJoinInviteRef.current) {
+      return undefined;
+    }
+    didAutoJoinInviteRef.current = true;
     connectToRoom(initialInviteCode, 'p2');
-    return () => {
-      roomClientRef.current?.disconnect();
-    };
+    return undefined;
   }, [hydrated, initialInviteCode, connectToRoom]);
 
   // Clean up WebSocket on unmount
@@ -318,7 +339,7 @@ export function GameShell({
   // Sync shared quest / coop / minigame / krathong state changes to room without echoing server snapshots
   useEffect(() => {
     if (playMode !== 'online' || roomStatus !== 'connected') return;
-    const shared = extractSharedQuestState(state);
+    const shared = extractSharedQuestState(stateRef.current);
     const serialized = JSON.stringify(shared);
     if (serialized === lastSyncedSharedJsonRef.current) return;
 
@@ -339,7 +360,7 @@ export function GameShell({
     state.coopTasks,
     state.krathongDesign,
     state.releasedKrathongs,
-    state,
+    state.lastEventLog,
   ]);
 
   // Preload Phaser & FestivalScene during setup
@@ -460,13 +481,13 @@ export function GameShell({
         onMove: (playerId, dx, dy, facing) => {
           dispatch({ type: 'MOVE_PLAYER', playerId, dx, dy, facing });
         },
-        onInteractSpot: (spotId) => {
-          setOpenSpotId(spotId);
-        },
+        onInteractSpot: setOpenSpotId,
+        onCameraPreset: setCameraPreset,
       },
       reducedMotionRef.current
     );
-    scene.setModalBlocked(Boolean(openSpotId) || resetOpen);
+    scene.setModalBlocked(Boolean(openSpotId) || resetOpen || hudOverlay !== null);
+    scene.setCameraPreset?.(cameraPreset);
     sceneRef.current = scene;
 
     try {
@@ -491,6 +512,7 @@ export function GameShell({
         }
       }
     } catch {
+      scene.destroy?.();
       legacyEngineRef.current = null;
       sceneRef.current = null;
       setWorldAssetStatus('error');
@@ -521,9 +543,24 @@ export function GameShell({
 
   useEffect(() => {
     if (sceneRef.current) {
-      sceneRef.current.setModalBlocked(Boolean(openSpotId) || resetOpen);
+      sceneRef.current.setModalBlocked(Boolean(openSpotId) || resetOpen || hudOverlay !== null);
     }
-  }, [openSpotId, resetOpen]);
+  }, [openSpotId, resetOpen, hudOverlay]);
+
+  useEffect(() => {
+    if (state.screen !== 'world' || !state.settings.musicEnabled) return;
+    return startFestivalMusic();
+  }, [state.screen, state.settings.musicEnabled]);
+
+  useEffect(() => {
+    if (state.screen !== 'setup' || !setupTarget.current) return;
+    const target = document.getElementById(setupTarget.current);
+    setupTarget.current = null;
+    if (!target) return;
+    target.scrollIntoView?.({ block: 'start' });
+    target.tabIndex = -1;
+    target.focus({ preventScroll: true });
+  }, [state.screen]);
 
   const handleVectorChange = useCallback((vx: number, vy: number) => {
     sceneRef.current?.setTouchVector(vx, vy);
@@ -578,8 +615,9 @@ export function GameShell({
 
   const handleWalkToPartner = useCallback(() => {
     const partnerRole: PlayerId = myOnlineRole === 'p1' ? 'p2' : 'p1';
-    const partnerPos = state.players[partnerRole].position;
-    const myPos = state.players[myOnlineRole].position;
+    const players = stateRef.current.players;
+    const partnerPos = players[partnerRole].position;
+    const myPos = players[myOnlineRole].position;
     const offsets = [
       { ox: -42, oy: 0 },
       { ox: 42, oy: 0 },
@@ -604,11 +642,13 @@ export function GameShell({
         break;
       }
     }
-  }, [myOnlineRole, state.players]);
+  }, [myOnlineRole]);
 
   const handleConfirmReset = async () => {
     setResetOpen(false);
     setOpenSpotId(null);
+    setHudOverlay(null);
+    setCameraPreset('follow');
     pendingBlobsRef.current = { p1: null, p2: null };
     pendingSyncOptionsRef.current = { forceReplace: true };
     await clearAllPersistedState();
@@ -620,6 +660,49 @@ export function GameShell({
   const activePlayer = state.players[controllingPlayerId];
   const nearbySpot = getSpotById(state.nearbySpotId);
   const partnerRole: PlayerId = myOnlineRole === 'p1' ? 'p2' : 'p1';
+  const { name: p1Name, customization: p1Outfit, portrait: p1Portrait } = state.players.p1;
+  const { name: p2Name, customization: p2Outfit, portrait: p2Portrait } = state.players.p2;
+  const hudProfiles = useMemo<Record<PlayerId, HudProfile>>(() => ({
+    p1: { id: 'p1', name: p1Name, customization: p1Outfit, portrait: p1Portrait },
+    p2: { id: 'p2', name: p2Name, customization: p2Outfit, portrait: p2Portrait },
+  }), [p1Name, p1Outfit, p1Portrait, p2Name, p2Outfit, p2Portrait]);
+  const { questStage, inventory, minigames, litLanternIds, pavilionBlessed, releasedKrathongs, krathongCrafted } = state;
+  const hudQuest = useMemo(() => ({
+    stage: questStage, inventory, minigames, lanterns: litLanternIds.length,
+    blessed: pavilionBlessed, released: releasedKrathongs.length,
+    progress: getCoupleProgressPercent({ inventory, minigames, releasedKrathongs, krathongCrafted }),
+  }), [questStage, inventory, minigames, litLanternIds, pavilionBlessed, releasedKrathongs, krathongCrafted]);
+  const canJoinPartner = playMode === 'online' &&
+    Math.hypot(state.players.p1.position.x - state.players.p2.position.x,
+      state.players.p1.position.y - state.players.p2.position.y) > 150;
+
+  const hudActions = useMemo<HudActions>(() => ({
+    onPlayer: (playerId) => {
+      if (playerId !== stateRef.current.settings.activePlayer) setOpenSpotId(null);
+      dispatch({ type: 'SET_ACTIVE_PLAYER', playerId });
+    },
+    onFollow: () => dispatch({ type: 'TOGGLE_FOLLOW_PARTNER' }),
+    onJoinPartner: handleWalkToPartner,
+    onOpenSetup: (section) => {
+      setupTarget.current = section;
+      setOpenSpotId(null);
+      setHudOverlay(null);
+      dispatch({ type: 'OPEN_SETUP' });
+    },
+    onConnectRoom: () => connectToRoom(roomCode, playMode === 'online' ? myOnlineRole : 'p1'),
+    onOverlay: setHudOverlay,
+    onEmote: handleSendEmote,
+    onInteract: () => setOpenSpotId(stateRef.current.nearbySpotId),
+    onCamera: (preset) => {
+      setCameraPreset(preset);
+      sceneRef.current?.setCameraPreset?.(preset);
+    },
+    onResetCamera: () => sceneRef.current?.resetCameraAngle?.(),
+    onPresentation: (patch) => dispatch({ type: 'SET_PRESENTATION_SETTINGS', patch }),
+    onSound: () => dispatch({ type: 'TOGGLE_SOUND' }),
+    onMotion: (mode) => dispatch({ type: 'SET_REDUCED_MOTION', mode }),
+    onResetGame: () => setResetOpen(true),
+  }), [connectToRoom, handleSendEmote, handleWalkToPartner, myOnlineRole, playMode, roomCode]);
 
   return (
     <div
@@ -686,50 +769,8 @@ export function GameShell({
           onRequestReset={() => setResetOpen(true)}
         />
       ) : (
-        <div className="world-layout">
-          <FestivalHud
-            state={state}
-            playMode={playMode}
-            roomCode={roomCode}
-            myOnlineRole={myOnlineRole}
-            roomStatus={roomStatus}
-            occupancy={occupancy}
-            cameraPreset={cameraPreset}
-            reducedMotion={effectiveReducedMotion}
-            onSetActivePlayer={(playerId) => {
-              if (playerId !== state.settings.activePlayer) {
-                setOpenSpotId(null);
-              }
-              dispatch({ type: 'SET_ACTIVE_PLAYER', playerId });
-            }}
-            onToggleFollow={() => dispatch({ type: 'TOGGLE_FOLLOW_PARTNER' })}
-            onCycleCameraPreset={() => {
-              const next = sceneRef.current?.cycleCameraPreset?.();
-              if (next) setCameraPreset(next);
-            }}
-            onResetCameraAngle={() => {
-              sceneRef.current?.resetCameraAngle?.();
-            }}
-            onOpenSetup={() => {
-              setOpenSpotId(null);
-              dispatch({ type: 'OPEN_SETUP' });
-            }}
-            onQuickSwitchOnline={() => {
-              connectToRoom(roomCode, 'p1');
-            }}
-            onSendEmote={handleSendEmote}
-            onWalkToPartner={handleWalkToPartner}
-            onToggleSound={() => dispatch({ type: 'TOGGLE_SOUND' })}
-            onToggleReducedMotion={() =>
-              dispatch({
-                type: 'SET_REDUCED_MOTION',
-                mode: effectiveReducedMotion ? 'no-preference' : 'reduce',
-              })
-            }
-            onRequestReset={() => setResetOpen(true)}
-          />
-
-          <main id="main-content" className="world-stage-wrap">
+        <div className="world-layout" data-festival-world data-high-contrast={state.settings.highContrast}>
+          <main id="main-content" className="world-stage-wrap" tabIndex={-1}>
             <h1 className="visually-hidden">
               แผนที่งานลอยกระทงคู่รัก คืนเพ็ญริมน้ำ
             </h1>
@@ -776,17 +817,17 @@ export function GameShell({
               aria-label="ฉากงานเทศกาลลอยกระทงแบบเดินสำรวจ 3 มิติ"
             />
 
-            <TouchControls
-              activePlayerName={activePlayer.name}
-              playMode={playMode}
-              nearbySpot={nearbySpot}
-              onVectorChange={handleVectorChange}
-              onNudgeStep={handleNudgeStep}
-              onInteract={() => {
-                if (state.nearbySpotId) setOpenSpotId(state.nearbySpotId);
-              }}
-            />
           </main>
+          <FestivalHud
+            profiles={hudProfiles} settings={state.settings} quest={hudQuest} eventLog={state.lastEventLog}
+            nearbySpot={worldAssetStatus === 'ready' ? nearbySpot : null} playMode={playMode} roomCode={roomCode}
+            role={myOnlineRole} roomStatus={roomStatus} roomError={roomError} occupancy={occupancy}
+            canJoinPartner={canJoinPartner} camera={cameraPreset} overlay={hudOverlay} actions={hudActions}
+          />
+          {worldAssetStatus === 'ready' && (
+            <TouchControls activePlayerName={activePlayer.name} alwaysVisible={state.settings.showTouchControls}
+              onVectorChange={handleVectorChange} onNudgeStep={handleNudgeStep} />
+          )}
 
           <InteractionModal
             spotId={openSpotId}

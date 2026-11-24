@@ -890,12 +890,16 @@ export function SetupScreen({
           </header>
 
           <div className="setup-grid">
-            {playMode === 'online' && roomStatus === 'connected' ? (
+            {playMode === 'online' ? (
               <>
                 <PlayerEditorCard
                   profile={state.players[myOnlineRole]}
                   labelTitle={`ตัวละครของคุณ (${myOnlineRole.toUpperCase()})`}
-                  badgeText="● ตัวละครที่คุณควบคุม"
+                  badgeText={
+                    roomStatus === 'connected'
+                      ? '● เชื่อมต่อห้องแล้ว'
+                      : '○ กำลังเตรียมเข้าห้อง'
+                  }
                   onUpdateName={onUpdateName}
                   onUpdateCustomization={onUpdateCustomization}
                   onPortraitProcessed={onPortraitProcessed}
