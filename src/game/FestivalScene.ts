@@ -13,7 +13,6 @@ import type {
   CoupleEmoteEvent,
   Direction,
   GameState,
-  PlayMode,
   PlayerId,
 } from '../domain/types';
 import {
@@ -86,8 +85,7 @@ export class FestivalScene {
   private callbacks: SceneBridgeCallbacks;
   private snapshot: GameState;
   private reducedMotion = false;
-  private playMode: PlayMode = 'local';
-  private myOnlineRole: PlayerId = 'p1';
+  private partnerPresent = false;
 
   private container: HTMLElement | null = null;
   private renderer: THREE.WebGLRenderer | null = null;
@@ -125,8 +123,21 @@ export class FestivalScene {
   private emoteExpireAt: Record<PlayerId, number> = { p1: 0, p2: 0 };
 
   private lanternVisuals: Lantern3DVisual[] = [];
+  private coupleWishLantern: {
+    group: THREE.Group;
+    halo: THREE.Sprite;
+    y: number;
+    baseX: number;
+    baseZ: number;
+  } | null = null;
   private krathongVisuals: Map<string, Krathong3DVisual> = new Map();
   private renderedReleases: GameState['releasedKrathongs'] | null = null;
+  private releaseCinematic: {
+    krathongId: string;
+    startedAt: number;
+    durationMs: number;
+    onComplete: () => void;
+  } | null = null;
   private ambientKrathongs: (FloatingOffering & {
     basePx: number;
     basePy: number;
@@ -279,6 +290,8 @@ export class FestivalScene {
     this.skyLanternBatch = null;
     this.skyLanternPoses = [];
     this.skyLanterns = [];
+    this.coupleWishLantern = null;
+    this.releaseCinematic = null;
     this.krathongVisuals.clear();
     this.renderedReleases = null;
     this.scene = null;
@@ -324,6 +337,22 @@ export class FestivalScene {
     this.zoomFactor = 1.0;
   }
 
+  public startReleaseCinematic(krathongId: string, onComplete: () => void): void {
+    this.releaseCinematic = {
+      krathongId,
+      startedAt: performance.now(),
+      durationMs: this.reducedMotion ? 1600 : 5400,
+      onComplete,
+    };
+  }
+
+  public stopReleaseCinematic(): void {
+    if (!this.releaseCinematic) return;
+    const cb = this.releaseCinematic.onComplete;
+    this.releaseCinematic = null;
+    cb();
+  }
+
   public transformInputVector(rawX: number, rawY: number): { dx: number; dy: number } {
     // Rotate input by current cameraYaw so Up/W always walks "into" the 3D view
     const cosY = Math.cos(this.cameraYaw);
@@ -351,14 +380,12 @@ export class FestivalScene {
   public updateSnapshot(
     state: GameState,
     reducedMotion: boolean,
-    playMode: PlayMode = 'local',
-    myOnlineRole: PlayerId = 'p1'
+    partnerPresent = false
   ): void {
     const changedQuality = this.snapshot.settings.graphicsQuality !== state.settings.graphicsQuality;
     this.snapshot = state;
     this.reducedMotion = reducedMotion;
-    this.playMode = playMode;
-    this.myOnlineRole = myOnlineRole;
+    this.partnerPresent = partnerPresent;
     if (!this.scene) return;
     if (changedQuality && this.container) this.applyGraphics(this.container.clientWidth, this.container.clientHeight);
     this.refreshVisualState();
@@ -426,8 +453,10 @@ export class FestivalScene {
       const offering = createOffering(assets, {
         base: 'classic-banana',
         flower: index % 3 === 0 ? 'golden-marigold' : 'pink-lotus',
-        glow: 'amber-candle', wishText: '',
-      }, 'classic');
+        glow: 'amber-candle',
+        wishText: '',
+        decorations: [],
+      }, 'ambient');
       offering.group.scale.setScalar(0.76 + (index % 4) * 0.09);
       offering.group.position.set(to3DX(basePx), WATER_LEVEL, to3DZ(basePy));
       scene.add(offering.group);
@@ -502,7 +531,7 @@ export class FestivalScene {
       const ringColor =
         spot.kind === 'pier'
           ? 0x2dd4bf
-          : spot.kind === 'gather' || spot.kind === 'pavilion'
+          : spot.kind === 'gather' || spot.kind === 'pavilion' || spot.kind === 'photo'
             ? 0xf472b6
             : 0xfbbf24;
 
@@ -559,10 +588,12 @@ export class FestivalScene {
           id: 'p1' as const,
           name: spot.npcName ?? spot.title,
           customization: {
+            gender: isBua ? ('female' as const) : ('male' as const),
             skinTone: 'golden-tan' as const,
             hairStyle: isBua ? ('wavy-bob' as const) : ('short-classic' as const),
             hairColor: isBua ? ('obsidian' as const) : ('honey-gold' as const),
             outfit: isBua ? ('silk-lotus' as const) : ('emerald-sabai' as const),
+            accessory: 'none' as const,
           },
           portrait: {
             status: 'absent' as const,
@@ -644,9 +675,7 @@ export class FestivalScene {
     if (!this.scene || !this.playerRigs || !this.assets) return;
 
     const cameraTargetId: PlayerId =
-      this.playMode === 'online'
-        ? this.myOnlineRole
-        : this.snapshot.settings.activePlayer;
+      this.snapshot.myRole;
 
     for (const pid of ['p1', 'p2'] as const) {
       const profile = this.snapshot.players[pid];
@@ -655,6 +684,7 @@ export class FestivalScene {
       const wz = to3DZ(profile.position.y);
       const wy = this.getGroundElevation(profile.position.x, profile.position.y);
 
+      rig.root.visible = pid === this.snapshot.myRole || this.partnerPresent;
       rig.root.position.set(wx, wy, wz);
       rig.targetYaw = yawFromFacing(profile.position.facing);
       syncCharacter3DRig(rig, profile, pid === cameraTargetId);
@@ -665,7 +695,7 @@ export class FestivalScene {
       const p1Pos = this.snapshot.players.p1.position;
       const p2Pos = this.snapshot.players.p2.position;
       const distPx = Math.hypot(p1Pos.x - p2Pos.x, p1Pos.y - p2Pos.y);
-      if (distPx <= 145) {
+      if (this.partnerPresent && distPx <= 145) {
         const a = this.playerRigs.p1.root.position;
         const b = this.playerRigs.p2.root.position;
         const positions = this.coupleTetherLine.geometry.getAttribute('position');
@@ -685,28 +715,62 @@ export class FestivalScene {
       }
     }
 
-    // Sync Yi Peng Lantern lighting
+    // Sync single meaningful Yi Peng Wish Lantern
+    const lanternLit =
+      this.snapshot.skyLantern.p1Lit ||
+      this.snapshot.skyLantern.p2Lit ||
+      this.snapshot.skyLantern.released;
     for (const lv of this.lanternVisuals) {
-      const lit = this.snapshot.litLanternIds.includes(lv.id);
       for (const material of lv.bulbMats) {
-        material.color.setHex(lit ? 0xffffff : 0x66513e);
-        material.emissiveIntensity = lit ? 1.42 : 0.05;
+        material.color.setHex(lanternLit ? 0xffffff : 0x66513e);
+        material.emissiveIntensity = lanternLit ? 1.55 : 0.08;
       }
-      lv.glowSprite.scale.setScalar(lit ? 1.58 : 0.82);
-      lv.glowSprite.material.opacity = lit ? 0.42 : 0.08;
-      lv.ringMat.opacity = lit ? 0.95 : 0.45;
+      lv.glowSprite.scale.setScalar(lanternLit ? 1.72 : 0.85);
+      lv.glowSprite.material.opacity = lanternLit ? 0.52 : 0.1;
+      lv.ringMat.opacity = lanternLit ? 0.95 : 0.45;
+    }
+
+    // Launch radiant 3D Couple Wish Lantern when released
+    if (this.snapshot.skyLantern.released && !this.coupleWishLantern && this.textures) {
+      const baseX = to3DX(410);
+      const baseZ = to3DZ(214);
+      const group = this.assets.create(
+        'PaperLantern',
+        { x: baseX, y: 2.6, z: baseZ, scale: 1.35 },
+        false
+      );
+      const halo = createGlowSprite(this.textures.goldGlow, 2.8, 0.72);
+      halo.position.set(0, 0.2, 0);
+      group.add(halo);
+      const tag = createTextPillSprite(
+        `🏮 ${this.snapshot.players.p1.name} ♥ ${this.snapshot.players.p2.name}`,
+        {
+          bgColor: 'rgba(15, 23, 42, 0.88)',
+          borderColor: '#FDE68A',
+          textColor: '#FEF3C7',
+          worldHeight: 0.46,
+        }
+      );
+      tag.position.set(0, 1.35, 0);
+      group.add(tag);
+      this.scene.add(group);
+      this.coupleWishLantern = { group, halo, y: 2.6, baseX, baseZ };
+    } else if (!this.snapshot.skyLantern.released && this.coupleWishLantern) {
+      this.scene.remove(this.coupleWishLantern.group);
+      this.assets.dispose(this.coupleWishLantern.group);
+      this.coupleWishLantern = null;
     }
 
     // Sync 3D Crafted Krathong preview on table
     if (this.craftPreviewGroup) {
       this.craftPreviewGroup.visible = this.snapshot.krathongCrafted;
       if (this.snapshot.krathongCrafted) {
-        const sig = `${this.snapshot.krathongDesign.base}|${this.snapshot.krathongDesign.flower}|${this.snapshot.krathongDesign.glow}`;
+        const sig = `${this.snapshot.krathongDesign.base}|${this.snapshot.krathongDesign.flower}|${this.snapshot.krathongDesign.glow}|${this.snapshot.krathongDesign.decorations.length}`;
         if (this.lastCraftSignature !== sig) {
           this.lastCraftSignature = sig;
           for (const child of this.craftPreviewGroup.children) this.assets.dispose(child);
           this.craftPreviewGroup.clear();
-          const preview = createOffering(this.assets, this.snapshot.krathongDesign, 'radiant');
+          const preview = createOffering(this.assets, this.snapshot.krathongDesign, 'couple');
           this.craftPreviewGroup.add(preview.group);
         }
       }
@@ -744,7 +808,7 @@ export class FestivalScene {
 
     for (const item of this.snapshot.releasedKrathongs) {
       if (!this.krathongVisuals.has(item.id)) {
-        const visual = createOffering(this.assets, item.design, item.quality.tier);
+        const visual = createOffering(this.assets, item.design, 'couple');
         const grp = visual.group;
         const tag = createTextPillSprite(
           `${item.coupleNames[0]} & ${item.coupleNames[1]}`,
@@ -777,9 +841,7 @@ export class FestivalScene {
   private snapCameraImmediate(): void {
     if (!this.camera || !this.playerRigs) return;
     const focusId: PlayerId =
-      this.playMode === 'online'
-        ? this.myOnlineRole
-        : this.snapshot.settings.activePlayer;
+      this.snapshot.myRole;
     const target = this.playerRigs[focusId].root.position;
     const { dist, height } = this.getCameraPresetMetrics();
     this.camera.position.set(
@@ -894,24 +956,9 @@ export class FestivalScene {
         this.callbacks.onMove(pid, dx, dy, facing);
       };
 
-      if (this.playMode === 'online') {
-        const myInX = wasdX + arrowX + (touchActive ? this.touchVector.x : 0);
-        const myInY = wasdY + arrowY + (touchActive ? this.touchVector.y : 0);
-        dispatchCameraRelativeMove(this.myOnlineRole, myInX, myInY);
-      } else {
-        const activeId = this.snapshot.settings.activePlayer;
-        const p1InX =
-          wasdX + (touchActive && activeId === 'p1' ? this.touchVector.x : 0);
-        const p1InY =
-          wasdY + (touchActive && activeId === 'p1' ? this.touchVector.y : 0);
-        const p2InX =
-          arrowX + (touchActive && activeId === 'p2' ? this.touchVector.x : 0);
-        const p2InY =
-          arrowY + (touchActive && activeId === 'p2' ? this.touchVector.y : 0);
-
-        dispatchCameraRelativeMove('p1', p1InX, p1InY);
-        dispatchCameraRelativeMove('p2', p2InX, p2InY);
-      }
+      const inputX = wasdX + arrowX + (touchActive ? this.touchVector.x : 0);
+      const inputY = wasdY + arrowY + (touchActive ? this.touchVector.y : 0);
+      dispatchCameraRelativeMove(this.snapshot.myRole, inputX, inputY);
 
       if (this.interactQueued) {
         this.interactQueued = false;
@@ -948,23 +995,66 @@ export class FestivalScene {
       }
     }
 
-    // Smooth 3D Follow Camera
+    // Smooth 3D Follow Camera OR Romantic Krathong Release Cinematic
     if (this.camera && this.playerRigs) {
-      const focusId: PlayerId =
-        this.playMode === 'online'
-          ? this.myOnlineRole
-          : this.snapshot.settings.activePlayer;
-      const target = this.playerRigs[focusId].root.position;
-      const { dist, height } = this.getCameraPresetMetrics();
-      const wantX = target.x + Math.sin(this.cameraYaw) * dist;
-      const wantY = target.y + height;
-      const wantZ = target.z + Math.cos(this.cameraYaw) * dist;
+      if (this.releaseCinematic) {
+        const elapsed = nowMs - this.releaseCinematic.startedAt;
+        const progress = Math.min(1, elapsed / this.releaseCinematic.durationMs);
+        const eased = progress * (2 - progress);
+        const targetVisual =
+          this.krathongVisuals.get(this.releaseCinematic.krathongId) ??
+          Array.from(this.krathongVisuals.values()).pop();
 
-      const camLerp = this.reducedMotion ? 1 : Math.min(1, dtFactor * 0.14);
-      this.camera.position.x += (wantX - this.camera.position.x) * camLerp;
-      this.camera.position.y += (wantY - this.camera.position.y) * camLerp;
-      this.camera.position.z += (wantZ - this.camera.position.z) * camLerp;
-      this.camera.lookAt(target.x, target.y + 2.45, target.z);
+        const kPos = targetVisual
+          ? targetVisual.group.position
+          : new THREE.Vector3(to3DX(960), WATER_LEVEL, to3DZ(860));
+
+        const orbitAngle = -0.35 + eased * 0.75;
+        const dist = 4.4 + eased * 2.8;
+        const height = 1.65 + eased * 1.45;
+        const wantX = kPos.x + Math.sin(orbitAngle) * dist;
+        const wantY = kPos.y + height;
+        const wantZ = kPos.z + Math.cos(orbitAngle) * dist;
+
+        const lerpRate = this.reducedMotion ? 1 : Math.min(1, dtFactor * 0.085);
+        this.camera.position.x += (wantX - this.camera.position.x) * lerpRate;
+        this.camera.position.y += (wantY - this.camera.position.y) * lerpRate;
+        this.camera.position.z += (wantZ - this.camera.position.z) * lerpRate;
+        this.camera.lookAt(kPos.x, kPos.y + 0.55, kPos.z);
+
+        if (elapsed >= this.releaseCinematic.durationMs) {
+          const done = this.releaseCinematic.onComplete;
+          this.releaseCinematic = null;
+          done();
+        }
+      } else {
+        const focusId: PlayerId = this.snapshot.myRole;
+        const target = this.playerRigs[focusId].root.position;
+        const { dist, height } = this.getCameraPresetMetrics();
+        const wantX = target.x + Math.sin(this.cameraYaw) * dist;
+        const wantY = target.y + height;
+        const wantZ = target.z + Math.cos(this.cameraYaw) * dist;
+
+        const camLerp = this.reducedMotion ? 1 : Math.min(1, dtFactor * 0.14);
+        this.camera.position.x += (wantX - this.camera.position.x) * camLerp;
+        this.camera.position.y += (wantY - this.camera.position.y) * camLerp;
+        this.camera.position.z += (wantZ - this.camera.position.z) * camLerp;
+        this.camera.lookAt(target.x, target.y + 2.45, target.z);
+      }
+    }
+
+    // Drift Couple's Personal Wish Lantern gently upward into the night sky
+    if (this.coupleWishLantern && !this.reducedMotion) {
+      this.coupleWishLantern.y += (deltaMs / 1000) * 0.42;
+      if (this.coupleWishLantern.y > 22) {
+        this.coupleWishLantern.y = 7.5;
+      }
+      this.coupleWishLantern.group.position.set(
+        this.coupleWishLantern.baseX + Math.sin(nowMs * 0.00055) * 1.1,
+        this.coupleWishLantern.y,
+        this.coupleWishLantern.baseZ + Math.cos(nowMs * 0.00048) * 0.9
+      );
+      this.coupleWishLantern.group.rotation.y += (deltaMs / 1000) * 0.22;
     }
 
     this.updateWater(nowMs);
@@ -1117,9 +1207,7 @@ export class FestivalScene {
         if (entry) {
           const spot = WORLD_SPOTS.find((w) => w.id === entry.spotId);
           const ctrlId =
-            this.playMode === 'online'
-              ? this.myOnlineRole
-              : this.snapshot.settings.activePlayer;
+            this.snapshot.myRole;
           const pos = this.snapshot.players[ctrlId].position;
           if (
             spot &&

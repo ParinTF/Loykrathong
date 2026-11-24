@@ -1,371 +1,266 @@
 import type {
   CoopSignalEvent,
   CoupleEmoteEvent,
-  MinigameId,
+  CouplePoseId,
+  PhotoBackdropId,
+  PhotoBoothEvent,
+  PhotoBoothFilterId,
+  PhotoBoothLayoutId,
   PlayerId,
   PlayerPosition,
   PlayerProfile,
   SharedRoomQuestState,
 } from '../domain/types';
 
-export type RoomConnectionStatus =
-  | 'disconnected'
-  | 'connecting'
-  | 'connected'
-  | 'error';
+export type RoomConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+export interface RoomOccupancy { p1: boolean; p2: boolean }
+export interface RoomSession { roomCode: string; seatKey: string; role: PlayerId }
+export type RoomIntent =
+  | { type: 'create_room'; seatKey: string }
+  | { type: 'join_room' | 'resume_room'; roomCode: string; seatKey: string };
 
-export interface RoomOccupancy {
-  p1: boolean;
-  p2: boolean;
+interface RoomSnapshot {
+  roomCode: string;
+  occupancy: RoomOccupancy;
+  players: Record<PlayerId, PlayerProfile>;
+  shared: SharedRoomQuestState;
 }
 
 export interface OnlineRoomCallbacks {
-  onJoined: (payload: {
-    roomCode: string;
-    role: PlayerId;
-    occupancy: RoomOccupancy;
-    players: Record<PlayerId, PlayerProfile>;
-    shared: SharedRoomQuestState;
-  }) => void;
-  onSnapshot: (payload: {
-    roomCode: string;
-    occupancy: RoomOccupancy;
-    players: Record<PlayerId, PlayerProfile>;
-    shared: SharedRoomQuestState;
-  }) => void;
+  onJoined: (message: RoomSnapshot & { role: PlayerId; seatKey: string }) => void;
+  onSnapshot: (message: RoomSnapshot) => void;
   onPeerMoved: (playerId: PlayerId, position: PlayerPosition) => void;
   onPeerProfile: (playerId: PlayerId, profile: PlayerProfile) => void;
   onEmote: (event: CoupleEmoteEvent) => void;
-  onCoopSignal?: (event: CoopSignalEvent) => void;
-  onStatusChange: (status: RoomConnectionStatus, errorMessage: string | null) => void;
+  onCoopSignal: (event: CoopSignalEvent) => void;
+  onPhotoBoothEvent?: (event: PhotoBoothEvent) => void;
+  onStatusChange: (status: RoomConnectionStatus, message: string | null, code?: string) => void;
 }
 
-const ROOM_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const SESSION_KEY = 'loykratong.room.seat.v2';
+const ROOM_CODE = /^[a-f0-9]{24}$/;
+const SEAT_KEY = /^[a-f0-9]{32}$/;
 
-// Per-tab in-memory client ID (never shared via sessionStorage when duplicating tabs!)
-const TAB_CLIENT_ID = `lk-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
-
-export function generateInviteRoomCode(length = 6): string {
-  let out = '';
-  for (let i = 0; i < length; i += 1) {
-    out += ROOM_CHARS[Math.floor(Math.random() * ROOM_CHARS.length)];
-  }
-  return out;
+export function createSeatKey(): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (value) => value.toString(16).padStart(2, '0')).join('');
 }
 
-export function normalizeRoomCodeInput(raw: string): string {
-  return raw
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '')
-    .slice(0, 8);
+export function readInviteCode(): string | null {
+  return typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('room')?.toLowerCase() ?? null;
 }
 
-export function readInitialRoomFromUrl(): string | null {
-  if (typeof window === 'undefined') return null;
+export function readRoomSession(invite: string | null): RoomSession | null {
   try {
-    const params = new URLSearchParams(window.location.search);
-    const code = normalizeRoomCodeInput(params.get('room') || '');
-    return code.length >= 4 ? code : null;
-  } catch {
-    return null;
-  }
+    const saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) ?? 'null') as RoomSession | null;
+    if (saved && ROOM_CODE.test(saved.roomCode) && SEAT_KEY.test(saved.seatKey)
+      && (saved.role === 'p1' || saved.role === 'p2') && (invite === null || invite === saved.roomCode)) return saved;
+  } catch { /* Storage is optional when a browser blocks it. */ }
+  return null;
+}
+
+export function saveRoomSession(session: RoomSession | null): void {
+  try {
+    if (session) sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    else sessionStorage.removeItem(SESSION_KEY);
+  } catch { /* In-memory reconnect continues even when storage is unavailable. */ }
 }
 
 export function buildRoomInviteUrl(roomCode: string): string {
-  if (typeof window === 'undefined') return `?room=${roomCode}`;
-  const url = new URL(window.location.href);
+  const url = new URL(window.location.pathname, window.location.origin);
   url.searchParams.set('room', roomCode);
   return url.toString();
 }
 
-export function getOrCreateClientId(): string {
-  return TAB_CLIENT_ID;
+export async function inspectInvitation(
+  code: string, signal: AbortSignal,
+): Promise<{ hostName: string } | { message: string; retry: boolean }> {
+  if (!ROOM_CODE.test(code)) return { message: 'ลิงก์คำเชิญนี้ไม่ถูกต้อง', retry: false };
+  try {
+    const response = await fetch('/api/invitations/' + code, { signal, cache: 'no-store' });
+    const data = await response.json();
+    if (response.ok && typeof data.hostName === 'string') return { hostName: data.hostName };
+    if (typeof data.error?.message === 'string') return { message: data.error.message, retry: response.status >= 500 };
+  } catch {
+    if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
+  }
+  return { message: 'ตรวจคำเชิญไม่สำเร็จ ลองเชื่อมต่ออีกครั้ง', retry: true };
 }
 
 export class OnlineRoomClient {
   private ws: WebSocket | null = null;
-  private reconnectTimer: number | null = null;
-  private pingTimer: number | null = null;
-  private intentionalClose = false;
-  private roomCode = '';
-  private preferredRole: PlayerId = 'p1';
-  private readonly clientId: string;
-  private getProfile: () => PlayerProfile;
-  private callbacks: OnlineRoomCallbacks;
-  private lastMoveSentAt = 0;
-  private wsEndpointOverride?: string;
+  private intent: RoomIntent | null = null;
+  private joined = false;
+  private attempts = 0;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
+  private moveTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastMoveAt = -Infinity;
 
   constructor(
-    getProfile: () => PlayerProfile,
-    callbacks: OnlineRoomCallbacks,
-    options?: { clientId?: string; wsEndpoint?: string }
-  ) {
-    this.getProfile = getProfile;
-    this.callbacks = callbacks;
-    this.clientId =
-      options?.clientId ??
-      `lk-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
-    this.wsEndpointOverride = options?.wsEndpoint;
-  }
+    private readonly getProfile: () => PlayerProfile,
+    private readonly callbacks: OnlineRoomCallbacks,
+    private readonly endpoint?: string,
+  ) {}
 
-  public connect(roomCode: string, preferredRole: PlayerId): void {
-    const normalized = normalizeRoomCodeInput(roomCode);
-    if (normalized.length < 4) {
-      this.callbacks.onStatusChange(
-        'error',
-        'กรุณากรอกรหัสห้องอย่างน้อย 4 ตัวอักษร (A-Z หรือ 0-9)'
-      );
-      return;
-    }
-
-    // If already connected or connecting to the exact same room & role, do nothing!
-    if (
-      this.ws &&
-      (this.ws.readyState === WebSocket.OPEN ||
-        this.ws.readyState === WebSocket.CONNECTING) &&
-      this.roomCode === normalized &&
-      this.preferredRole === preferredRole
-    ) {
-      return;
-    }
-
+  connect(intent: RoomIntent): void {
+    if (this.ws && this.intent && this.intent.seatKey === intent.seatKey) return;
     this.disconnect();
-    this.intentionalClose = false;
-    this.roomCode = normalized;
-    this.preferredRole = preferredRole;
-    this.openSocket(false);
+    this.intent = intent;
+    this.attempts = 0;
+    this.open();
   }
 
-  private clearReconnectTimer(): void {
-    if (this.reconnectTimer !== null) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-  }
-
-  private openSocket(isReconnect: boolean): void {
-    this.clearReconnectTimer();
-
-    if (typeof WebSocket === 'undefined') {
-      this.callbacks.onStatusChange(
-        'error',
-        'เบราว์เซอร์นี้ไม่รองรับการเชื่อมต่อ WebSocket'
-      );
-      return;
-    }
-
-    // Close any previous socket cleanly with handlers detached so its async close never triggers a zombie timer
-    if (this.ws) {
-      const stale = this.ws;
-      this.ws = null;
-      stale.onopen = null;
-      stale.onmessage = null;
-      stale.onerror = null;
-      stale.onclose = null;
-      try {
-        stale.close();
-      } catch {
-        // ignore
-      }
-    }
-
-    this.callbacks.onStatusChange('connecting', null);
-    const wsUrl =
-      this.wsEndpointOverride ??
-      `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
-
+  private open(): void {
+    const intent = this.intent;
+    if (!intent) return;
+    this.callbacks.onStatusChange('connecting', this.attempts ? 'กำลังกลับเข้าห้องเดิม…' : null);
     let socket: WebSocket;
     try {
-      socket = new WebSocket(wsUrl);
+      const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      socket = new WebSocket(this.endpoint ?? scheme + '//' + window.location.host + '/ws');
     } catch {
-      this.callbacks.onStatusChange(
-        'error',
-        'ไม่สามารถเปิดช่องทางเชื่อมต่อห้องออนไลน์ได้'
-      );
+      this.callbacks.onStatusChange('error', 'เปิดการเชื่อมต่อไม่ได้ ลองอีกครั้ง');
       return;
     }
-
     this.ws = socket;
-
+    this.handshakeTimer = setTimeout(() => {
+      if (this.ws === socket && !this.joined) socket.close();
+    }, 10000);
     socket.onopen = () => {
       if (this.ws !== socket) return;
-      socket.send(
-        JSON.stringify({
-          type: 'join_room',
-          roomCode: this.roomCode,
-          preferredRole: this.preferredRole,
-          clientId: this.clientId,
-          profile: this.getProfile(),
-          preserveRoomPosition: isReconnect,
-        })
-      );
-      this.startHeartbeat();
+      socket.send(JSON.stringify(intent.type === 'resume_room' ? intent : { ...intent, profile: this.getProfile() }));
     };
-
     socket.onmessage = (event) => {
       if (this.ws !== socket) return;
-      try {
-        const msg = JSON.parse(String(event.data));
-        if (!msg || typeof msg !== 'object') return;
-
-        if (msg.type === 'joined_room') {
-          this.preferredRole = msg.role;
+      let msg;
+      try { msg = JSON.parse(String(event.data)); } catch { return; }
+      if (!msg || typeof msg !== 'object') return;
+      switch (msg.type) {
+        case 'joined_room':
+          this.joined = true;
+          this.attempts = 0;
+          this.clearHandshake();
+          this.intent = { type: 'resume_room', roomCode: msg.roomCode, seatKey: intent.seatKey };
+          this.callbacks.onJoined({ ...msg, seatKey: intent.seatKey });
           this.callbacks.onStatusChange('connected', null);
-          this.callbacks.onJoined({
-            roomCode: msg.roomCode,
-            role: msg.role,
-            occupancy: msg.occupancy,
-            players: msg.players,
-            shared: msg.shared,
-          });
-        } else if (msg.type === 'room_snapshot') {
-          this.callbacks.onSnapshot({
-            roomCode: msg.roomCode,
-            occupancy: msg.occupancy,
-            players: msg.players,
-            shared: msg.shared,
-          });
-        } else if (msg.type === 'peer_moved') {
-          this.callbacks.onPeerMoved(msg.playerId, msg.position);
-        } else if (msg.type === 'peer_profile') {
-          this.callbacks.onPeerProfile(msg.playerId, msg.profile);
-        } else if (msg.type === 'emote') {
-          this.callbacks.onEmote({
-            playerId: msg.playerId,
-            emoji: msg.emoji,
-            text: msg.text,
-            ts: msg.ts,
-          });
-        } else if (msg.type === 'coop_signal') {
-          this.callbacks.onCoopSignal?.({
-            playerId: msg.playerId,
-            spotId: msg.spotId,
-            action: msg.action,
-            value: msg.value,
-            ts: msg.ts,
-          });
-        } else if (msg.type === 'room_error') {
-          this.intentionalClose = true;
-          this.callbacks.onStatusChange('error', msg.message || 'เข้าห้องไม่สำเร็จ');
-          socket.close();
-        }
-      } catch {
-        // Ignore malformed frame
+          return;
+        case 'room_snapshot': this.callbacks.onSnapshot(msg); return;
+        case 'peer_moved': this.callbacks.onPeerMoved(msg.playerId, msg.position); return;
+        case 'peer_profile': this.callbacks.onPeerProfile(msg.playerId, msg.profile); return;
+        case 'emote': this.callbacks.onEmote(msg); return;
+        case 'coop_signal': this.callbacks.onCoopSignal(msg); return;
+        case 'photobooth_frame':
+        case 'photobooth_cam_state':
+        case 'photobooth_shutter':
+        case 'photobooth_snap':
+          this.callbacks.onPhotoBoothEvent?.(msg as PhotoBoothEvent);
+          return;
+        case 'room_error':
+          if (msg.code === 'seat_busy' && this.attempts < 4) {
+            socket.close();
+          } else {
+            this.disconnect();
+            this.callbacks.onStatusChange('error', msg.message || 'เข้าห้องไม่สำเร็จ', msg.code);
+          }
       }
     };
-
-    socket.onerror = () => {
-      // Handled on close
-    };
-
     socket.onclose = () => {
-      // CRITICAL: Ignore async close events from superseded sockets!
-      if (this.ws !== socket) {
-        return;
-      }
-      this.stopHeartbeat();
+      if (this.ws !== socket) return;
+      this.clearHandshake();
+      this.clearMove();
       this.ws = null;
-      if (this.intentionalClose) {
+      this.joined = false;
+      if (!this.intent) return;
+      this.attempts += 1;
+      if (this.intent.type !== 'resume_room' && this.attempts > 2) {
+        this.callbacks.onStatusChange('error', 'การเชื่อมต่อขาดหาย ลองเริ่มอีกครั้ง');
         return;
       }
-      this.callbacks.onStatusChange(
-        'connecting',
-        'สัญญาณสะดุด กำลังเชื่อมต่อกลับเข้าห้องเดิมอัตโนมัติ...'
-      );
-      this.clearReconnectTimer();
-      this.reconnectTimer = setTimeout(() => {
-        if (!this.intentionalClose && this.roomCode) {
-          this.openSocket(true);
-        }
-      }, 1800) as unknown as number;
+      this.callbacks.onStatusChange('connecting', 'สัญญาณขาดหาย กำลังกลับเข้าห้องเดิม…');
+      this.retryTimer = setTimeout(() => {
+        this.retryTimer = null;
+        this.open();
+      }, Math.min(8000, 1200 * this.attempts));
     };
   }
 
-  private startHeartbeat(): void {
-    this.stopHeartbeat();
-    this.pingTimer = setInterval(() => {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ type: 'ping' }));
-      }
-    }, 20_000) as unknown as number;
+  private clearHandshake(): void {
+    if (this.handshakeTimer !== null) clearTimeout(this.handshakeTimer);
+    this.handshakeTimer = null;
   }
 
-  private stopHeartbeat(): void {
-    if (this.pingTimer !== null) {
-      clearInterval(this.pingTimer);
-      this.pingTimer = null;
-    }
+  private clearMove(): void {
+    if (this.moveTimer !== null) clearTimeout(this.moveTimer);
+    this.moveTimer = null;
   }
 
-  public sendProfile(profile: PlayerProfile): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'update_profile', profile }));
-    }
+  private send(payload: object): void {
+    if (this.joined && this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(payload));
   }
 
-  public sendMove(position: PlayerPosition, force = false): void {
-    if (this.ws?.readyState !== WebSocket.OPEN) return;
-    const now = performance.now();
-    if (!force && now - this.lastMoveSentAt < 38) return;
-    this.lastMoveSentAt = now;
-    this.ws.send(JSON.stringify({ type: 'move', position }));
+  sendProfile(profile: PlayerProfile): void { this.send({ type: 'update_profile', profile }); }
+
+  sendMove(position: PlayerPosition, force = false): void {
+    if (!this.joined) return;
+    this.clearMove();
+    const deliver = () => {
+      this.moveTimer = null;
+      this.lastMoveAt = performance.now();
+      this.send({ type: 'move', position });
+    };
+    const remaining = 38 - (performance.now() - this.lastMoveAt);
+    if (force || remaining <= 0) deliver();
+    else this.moveTimer = setTimeout(deliver, remaining);
   }
 
-  public sendSharedState(
-    shared: SharedRoomQuestState,
-    options?: {
-      forceReplace?: boolean;
-      resetTaskKey?: string;
-      resetMinigame?: MinigameId;
-    }
-  ): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(
-        JSON.stringify({
-          type: 'sync_shared',
-          shared,
-          ...options,
-        })
-      );
-    }
+  sendSharedState(shared: SharedRoomQuestState, options?: {
+    forceReplace?: boolean;
+  }): void {
+    this.send({ type: 'sync_shared', shared, ...options });
   }
 
-  public sendCoopSignal(spotId: string, action: string, value = 0): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(
-        JSON.stringify({
-          type: 'coop_signal',
-          spotId,
-          action,
-          value,
-        })
-      );
-    }
+  sendCoopSignal(spotId: string, action: string, value = 0, x?: number, y?: number): void {
+    this.send({ type: 'coop_signal', spotId, action, value, x, y });
   }
 
-  public sendEmote(emoji: string, text: string): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'send_emote', emoji, text }));
-    }
+  sendPhotoBoothFrame(dataUrl: string, mirrored: boolean, filter: PhotoBoothFilterId): void {
+    this.send({ type: 'photobooth_frame', dataUrl, mirrored, filter });
   }
 
-  public disconnect(): void {
-    this.intentionalClose = true;
-    this.stopHeartbeat();
-    this.clearReconnectTimer();
-    if (this.ws) {
-      const active = this.ws;
-      this.ws = null;
-      active.onopen = null;
-      active.onmessage = null;
-      active.onerror = null;
-      active.onclose = null;
-      try {
-        active.close();
-      } catch {
-        // ignore
-      }
+  sendPhotoBoothCamState(active: boolean): void {
+    this.send({ type: 'photobooth_cam_state', active });
+  }
+
+  sendPhotoBoothShutter(payload: {
+    sessionId: string;
+    layout: PhotoBoothLayoutId;
+    backdrop: PhotoBackdropId;
+    pose: CouplePoseId;
+    caption: string;
+  }): void {
+    this.send({ type: 'photobooth_shutter', ...payload });
+  }
+
+  sendPhotoBoothSnap(sessionId: string, shotIndex: number, dataUrl: string | null): void {
+    this.send({ type: 'photobooth_snap', sessionId, shotIndex, dataUrl });
+  }
+
+  sendEmote(emoji: string, text: string): void { this.send({ type: 'send_emote', emoji, text }); }
+
+  disconnect(): void {
+    this.intent = null;
+    this.joined = false;
+    this.clearHandshake();
+    this.clearMove();
+    if (this.retryTimer !== null) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    const socket = this.ws;
+    this.ws = null;
+    if (socket) {
+      socket.onopen = null;
+      socket.onmessage = null;
+      socket.onclose = null;
+      try { socket.close(); } catch { /* Already closed. */ }
     }
   }
 }

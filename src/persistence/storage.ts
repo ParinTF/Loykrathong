@@ -157,28 +157,18 @@ export async function processPortraitFileLocally(
     const objectUrl = URL.createObjectURL(file);
     try {
       const img = await loadImageLocally(objectUrl);
-      const size = 128;
+      const size = 192;
       const canvas = document.createElement('canvas');
       canvas.width = size;
       canvas.height = size;
       const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        const fallbackDataUrl = await readBlobAsDataUrl(file);
-        return {
-          portrait: {
-            status: 'ready',
-            dataUrl: fallbackDataUrl,
-            mimeType: detectedMime,
-            error: null,
-            updatedAt: now,
-          },
-          blob: file,
-        };
-      }
+      if (!ctx) throw new Error('Portrait canvas is unavailable');
 
       const srcSize = Math.min(img.naturalWidth || img.width, img.naturalHeight || img.height);
       const sx = Math.max(0, Math.floor(((img.naturalWidth || img.width) - srcSize) / 2));
       const sy = Math.max(0, Math.floor(((img.naturalHeight || img.height) - srcSize) / 2));
+      ctx.fillStyle = '#142039';
+      ctx.fillRect(0, 0, size, size);
       ctx.drawImage(img, sx, sy, srcSize, srcSize, 0, 0, size, size);
 
       const blob = await new Promise<Blob>((resolve, reject) => {
@@ -187,8 +177,8 @@ export async function processPortraitFileLocally(
             if (result) resolve(result);
             else reject(new Error('Canvas export failed'));
           },
-          'image/png',
-          0.9
+          'image/jpeg',
+          0.84
         );
       });
 
@@ -300,11 +290,20 @@ function writeSerializableToLocalStorage(serializable: GameState): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(serializable));
   } catch {
-    // Fallback: retry without inline data URLs if storage quota is tight
+    // Fallback: retry without inline portrait/photobooth data URLs if storage quota is tight
     try {
-      serializable.players.p1.portrait.dataUrl = null;
-      serializable.players.p2.portrait.dataUrl = null;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(serializable));
+      const compact: GameState = {
+        ...serializable,
+        players: {
+          p1: { ...serializable.players.p1, portrait: { ...serializable.players.p1.portrait, dataUrl: null } },
+          p2: { ...serializable.players.p2, portrait: { ...serializable.players.p2.portrait, dataUrl: null } },
+        },
+        photoMemories: serializable.photoMemories.map((m) => ({
+          ...m,
+          compositeDataUrl: null,
+        })),
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(compact));
     } catch {
       // Ignore unrecoverable storage quota errors gracefully
     }
@@ -434,38 +433,76 @@ export async function loadPersistedState(): Promise<GameState | null> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<GameState>;
-    if (!parsed || parsed.schemaVersion !== 1 || !parsed.players) {
+    const parsed = JSON.parse(raw) as Omit<Partial<GameState>, 'schemaVersion'> & {
+      schemaVersion?: number;
+      screen?: unknown;
+    };
+    if (
+      !parsed ||
+      (parsed.schemaVersion !== 1 && parsed.schemaVersion !== 2) ||
+      !parsed.players
+    ) {
       return null;
     }
 
+    delete parsed.screen;
     const base = createInitialGameState();
     const merged: GameState = {
       ...base,
       ...parsed,
+      schemaVersion: 2,
+      myRole: parsed.myRole === 'p2' ? 'p2' : 'p1',
       settings: {
         ...base.settings,
-        ...(parsed.settings ?? {}),
+        activePlayer: parsed.settings?.activePlayer === 'p2' ? 'p2' : 'p1',
+        followPartner: parsed.settings?.followPartner !== false,
+        reducedMotionOverride:
+          parsed.settings?.reducedMotionOverride === 'reduce' ||
+          parsed.settings?.reducedMotionOverride === 'no-preference'
+            ? parsed.settings.reducedMotionOverride
+            : 'system',
+        soundEnabled: parsed.settings?.soundEnabled !== false,
         graphicsQuality: normalizeGraphicsQuality(parsed.settings?.graphicsQuality),
         musicEnabled: parsed.settings?.musicEnabled === true,
         highContrast: parsed.settings?.highContrast === true,
         showTouchControls: parsed.settings?.showTouchControls === true,
       },
       inventory: { ...base.inventory, ...(parsed.inventory ?? {}) },
-      contributedBy: { ...base.contributedBy, ...(parsed.contributedBy ?? {}) },
-      minigames: {
-        recipe: { ...base.minigames.recipe, ...(parsed.minigames?.recipe ?? {}) },
-        assembly: { ...base.minigames.assembly, ...(parsed.minigames?.assembly ?? {}) },
-        rhythm: { ...base.minigames.rhythm, ...(parsed.minigames?.rhythm ?? {}) },
+      lotusBoat: {
+        ...base.lotusBoat,
+        ...(parsed.lotusBoat ?? {}),
+        collectedIds: Array.isArray(parsed.lotusBoat?.collectedIds)
+          ? parsed.lotusBoat.collectedIds
+          : base.lotusBoat.collectedIds,
+      },
+      leafRelay: {
+        ...base.leafRelay,
+        ...(parsed.leafRelay ?? {}),
+        finishedPetals: Array.isArray(parsed.leafRelay?.finishedPetals)
+          ? parsed.leafRelay.finishedPetals
+          : base.leafRelay.finishedPetals,
+      },
+      fortunePaper: {
+        ...base.fortunePaper,
+        ...(parsed.fortunePaper ?? {}),
+      },
+      skyLantern: {
+        ...base.skyLantern,
+        ...(parsed.skyLantern ?? {}),
+      },
+      activePose: parsed.activePose ?? base.activePose,
+      photoMemories: Array.isArray(parsed.photoMemories) ? parsed.photoMemories : [],
+      pierCeremony: {
+        ...base.pierCeremony,
+        ...(parsed.pierCeremony ?? {}),
       },
       krathongDesign: {
         ...base.krathongDesign,
         ...(parsed.krathongDesign ?? {}),
+        decorations: Array.isArray(parsed.krathongDesign?.decorations)
+          ? parsed.krathongDesign.decorations
+          : base.krathongDesign.decorations,
       },
-      coopTasks:
-        parsed.coopTasks && typeof parsed.coopTasks === 'object'
-          ? parsed.coopTasks
-          : {},
       players: {
         p1: {
           ...base.players.p1,
@@ -500,9 +537,6 @@ export async function loadPersistedState(): Promise<GameState | null> {
           },
         },
       },
-      litLanternIds: Array.isArray(parsed.litLanternIds)
-        ? parsed.litLanternIds
-        : [],
       releasedKrathongs: Array.isArray(parsed.releasedKrathongs)
         ? parsed.releasedKrathongs
         : [],

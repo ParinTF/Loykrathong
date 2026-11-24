@@ -1,7 +1,7 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { GameShell, type WorldModulesTuple } from '../src/components/GameShell';
-import { MinigameSuite } from '../src/components/MinigameSuite';
+import { KrathongStudioActivity } from '../src/components/activities/KrathongStudioActivity';
 import { createInitialGameState, gameReducer } from '../src/domain/reducer';
 import { getSpotById } from '../src/domain/worldMap';
 import {
@@ -14,9 +14,10 @@ import {
 describe('Audit remediation regression suite (LK-01 through LK-05)', () => {
   beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
   });
 
-  it('LK-01: gates readiness on world module preload and recovers cleanly via retry after import failure', async () => {
+  it('LK-01 & LK-04: recovers cleanly via retry after 3D module import failure and passes reducedMotion on instantiation', async () => {
     const fakeSceneInstances: { initialReducedMotion: boolean }[] = [];
     class FakeFestivalScene {
       public initialReducedMotion: boolean;
@@ -33,19 +34,8 @@ describe('Audit remediation regression suite (LK-01 through LK-05)', () => {
       setTouchVector() {}
     }
 
-    const fakeGameDestroy = vi.fn();
-    class FakePhaserGame {
-      destroy = fakeGameDestroy;
-    }
-
     const fakeModules = [
-      {
-        default: {
-          AUTO: 0,
-          Game: FakePhaserGame,
-          Scale: { RESIZE: 0, CENTER_BOTH: 0 },
-        },
-      },
+      { default: {} },
       { FestivalScene: FakeFestivalScene },
     ] as unknown as WorldModulesTuple;
 
@@ -58,86 +48,78 @@ describe('Audit remediation regression suite (LK-01 through LK-05)', () => {
       return Promise.resolve(fakeModules);
     });
 
-    render(<GameShell loadWorldModules={loadWorldModules} />);
-
-    // First attempt fails -> shows recovery alert and keeps enter disabled until ready
-    const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/ยังเตรียมฉากงานลอยกระทงไม่สำเร็จ/i);
-    const startBtn = screen.getByRole('button', {
-      name: /เข้าสู่งานลอยกระทงคู่กัน/i,
+    // Pre-persist reducedMotionOverride: 'reduce' so LK-04 checks initial reducedMotion on scene mount
+    const base = gameReducer(createInitialGameState(), {
+      type: 'SET_REDUCED_MOTION',
+      mode: 'reduce',
     });
-    expect(startBtn).toBeDisabled();
+    flushStateToLocalStorageSync(base);
 
-    // Select reduced motion before entering (also verifies LK-04 initial reducedMotion)
-    fireEvent.click(screen.getByLabelText('ลดการเคลื่อนไหว'));
+    render(<GameShell offlineDemo loadWorldModules={loadWorldModules} />);
 
-    // Retry preload -> resolves and unlocks offline-ready entry
-    fireEvent.click(screen.getByRole('button', { name: /ลองโหลดฉากอีกครั้ง/i }));
-
+    // Wait for persisted reducedMotion preference to hydrate before entering world
     await waitFor(() => {
       expect(
-        screen.getByRole('button', { name: /เข้าสู่งานลอยกระทงคู่กัน/i })
-      ).toBeEnabled();
+        document.querySelector('.app-shell')?.getAttribute('data-reduced-motion')
+      ).toBe('true');
     });
 
+    // Enter world -> first load fails -> recovery alert appears
     fireEvent.click(
-      screen.getByRole('button', { name: /เข้าสู่งานลอยกระทงคู่กัน/i })
+      screen.getByRole('button', { name: /เริ่มต้นคืนพิเศษด้วยกัน/i })
     );
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/โหลดฉากงานลอยกระทงไม่สำเร็จ/i);
+
+    // Retry preload -> resolves and mounts FestivalScene with reducedMotion = true
+    fireEvent.click(screen.getByRole('button', { name: /ลองโหลดฉากอีกครั้ง/i }));
 
     await waitFor(() => {
       expect(fakeSceneInstances).toHaveLength(1);
     });
-    // LK-04: initial reducedMotion passed directly on scene instantiation
     expect(fakeSceneInstances[0].initialReducedMotion).toBe(true);
     expect(loadWorldModules).toHaveBeenCalledTimes(2);
   });
 
-  it('LK-02: exposes accessible non-visual cue description and polite sweetspot status in Rhythm minigame', () => {
-    vi.useFakeTimers();
-    try {
-      render(
-        <MinigameSuite
-          progress={{
-            recipe: { status: 'passed', score: 90, attempts: 1 },
-            assembly: { status: 'passed', score: 95, attempts: 1 },
-            rhythm: { status: 'pending', score: 0, attempts: 0 },
-          }}
-          reducedMotion={true}
-          soundEnabled={false}
-          onCompleteMinigame={vi.fn()}
-          onResetMinigame={vi.fn()}
-        />
-      );
+  it('LK-02: exposes accessible keyboard nudging & polite status announcements in Shared Krathong Studio', () => {
+    const state = createInitialGameState();
+    const onMove = vi.fn();
 
-      fireEvent.click(
-        screen.getByRole('button', { name: /เริ่มจับจังหวะแสง/i })
-      );
+    render(
+      <KrathongStudioActivity
+        design={state.krathongDesign}
+        inventory={state.inventory}
+        crafted={false}
+        players={state.players}
+        myRole="p1"
+        bothOnline={true}
+        lastSignal={null}
+        soundEnabled={false}
+        onUpdateDesign={vi.fn()}
+        onAddDecoration={vi.fn()}
+        onMoveDecoration={onMove}
+        onRemoveDecoration={vi.fn()}
+        onClearDecorations={vi.fn()}
+        onCraftKrathong={vi.fn()}
+      />
+    );
 
-      const tapBtn = screen.getByRole('button', { name: /แตะให้ตรงแสง/i });
-      expect(tapBtn).toHaveAttribute('aria-describedby');
-
-      // Advance reduced-motion step timer until cursor reaches center sweetspot (0.5)
-      act(() => {
-        vi.advanceTimersByTime(1100);
-      });
-
-      expect(
-        screen.getByText(/จังหวะเข้าเป้ากลางแล้ว/i)
-      ).toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
+    const handle = screen.getAllByRole('button', {
+      name: /ใช้ปุ่มลูกศรเพื่อเลื่อน/i,
+    })[0];
+    fireEvent.keyDown(handle, { key: 'ArrowUp' });
+    expect(onMove).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/ขยับ.*ขึ้นด้านบน/i)).toBeInTheDocument();
   });
 
   it('LK-03: recalculates nearbySpotId when switching active player with followPartner disabled', () => {
     const pavilion = getSpotById('pavilion-blessing')!;
     let state = createInitialGameState();
     state = gameReducer(state, { type: 'ENTER_WORLD' });
-    // Turn off followPartner so p2 remains at spawn
     state = gameReducer(state, { type: 'TOGGLE_FOLLOW_PARTNER' });
     expect(state.settings.followPartner).toBe(false);
 
-    // Teleport p1 next to pavilion via hydration and move slightly
     state = gameReducer(state, {
       type: 'HYDRATE_STATE',
       payload: {
@@ -153,11 +135,9 @@ describe('Audit remediation regression suite (LK-01 through LK-05)', () => {
     });
     expect(state.nearbySpotId).toBe('pavilion-blessing');
 
-    // Switch active player to p2 at spawn -> nearbySpotId must clear immediately
     state = gameReducer(state, { type: 'SET_ACTIVE_PLAYER', playerId: 'p2' });
     expect(state.nearbySpotId).toBeNull();
 
-    // Switch back to p1 -> nearbySpotId restores to pavilion-blessing
     state = gameReducer(state, { type: 'SET_ACTIVE_PLAYER', playerId: 'p1' });
     expect(state.nearbySpotId).toBe('pavilion-blessing');
   });
@@ -174,20 +154,21 @@ describe('Audit remediation regression suite (LK-01 through LK-05)', () => {
       playerId: 'p1',
       portrait: {
         status: 'ready',
-        dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        dataUrl:
+          'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
         mimeType: 'image/png',
         error: null,
         updatedAt: '2026-11-24T03:00:00.000Z',
       },
     });
 
-    // Immediate synchronous flush before any async timer settles
     flushStateToLocalStorageSync(state);
     const immediateLoaded = await loadPersistedState();
     expect(immediateLoaded?.players.p1.name).toBe('ดาริกา');
-    expect(immediateLoaded?.players.p1.portrait.dataUrl).toContain('data:image/png');
+    expect(immediateLoaded?.players.p1.portrait.dataUrl).toContain(
+      'data:image/png'
+    );
 
-    // Simulate IndexedDB existing on globalThis yet failing to open
     const originalIdb = globalThis.indexedDB;
     Object.defineProperty(globalThis, 'indexedDB', {
       configurable: true,
@@ -199,12 +180,10 @@ describe('Audit remediation regression suite (LK-01 through LK-05)', () => {
     });
 
     try {
-      // Save #1 with portrait blob (IDB fails -> must keep fallback in localStorage)
       await savePersistedState(state, {
         p1: new Blob(['png'], { type: 'image/png' }),
       });
 
-      // Save #2 without portraitBlobs (e.g. walking/settings update -> must NOT wipe fallback!)
       const movedState = gameReducer(state, {
         type: 'MOVE_PLAYER',
         playerId: 'p1',

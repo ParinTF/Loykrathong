@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { GRAPHICS_QUALITIES, type AppSettings, type GraphicsQuality, type PresentationSettings } from '../../domain/types';
 import type { CameraPreset } from '../../game/FestivalScene';
 import { buildRoomInviteUrl, type RoomConnectionStatus } from '../../online/roomClient';
@@ -88,62 +88,86 @@ export function SettingsPanel({ settings, camera, actions, onDismiss }: {
   );
 }
 
-export function MultiplayerPanel({ roomCode, status, bothOnline, error, onConnect, onManage, onDismiss }: {
-  roomCode: string;
-  status: RoomConnectionStatus;
-  bothOnline: boolean;
-  error: string | null;
-  onConnect: () => void;
-  onManage: () => void;
-  onDismiss: () => void;
-}) {
-  const [copied, setCopied] = useState(false);
-  const [copyError, setCopyError] = useState(false);
-  const invite = useRef<HTMLInputElement>(null);
+function InviteActions({ roomCode }: { roomCode: string }) {
+  const [feedback, setFeedback] = useState('');
+  const [manual, setManual] = useState(false);
+  const field = useRef<HTMLInputElement>(null);
+  const url = buildRoomInviteUrl(roomCode);
 
-  async function copyInvite() {
-    if (!invite.current) return;
+  useEffect(() => {
+    if (manual) {
+      field.current?.focus();
+      field.current?.select();
+    }
+  }, [manual]);
+
+  async function copy() {
     try {
-      await navigator.clipboard.writeText(invite.current.value);
-      setCopied(true);
-      setCopyError(false);
+      await navigator.clipboard.writeText(url);
+      setFeedback('คัดลอกคำเชิญแล้ว');
     } catch {
-      invite.current.focus();
-      invite.current.select();
-      setCopyError(true);
+      setManual(true);
+      setFeedback('เลือกและคัดลอกลิงก์นี้ได้เลย');
+    }
+  }
+
+  async function share() {
+    if (!navigator.share) {
+      await copy();
+      return;
+    }
+    try {
+      await navigator.share({ title: 'คืนเพ็ญของเราสองคน', text: 'มาลอยกระทงด้วยกันคืนนี้', url });
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) await copy();
     }
   }
 
   return (
-    <HudDialog title="เล่นด้วยกัน" onDismiss={onDismiss}>
-      {status === 'connected' ? (
-        <>
-          <p className="hud-room__summary" role="status">
-            ห้อง <strong>{roomCode}</strong> · {bothOnline ? 'ออนไลน์ครบคู่' : 'รอคู่รักเข้าห้อง'}
-          </p>
-          <label className="hud-invite">
-            ลิงก์เชิญ
-            <input type="url" ref={invite} readOnly value={buildRoomInviteUrl(roomCode)} />
-          </label>
-          <button className="hud-text-button hud-text-button--primary" onClick={() => void copyInvite()} type="button">
-            <HudIcon name={copied ? 'check' : 'link'} /> {copied ? 'คัดลอกลิงก์แล้ว' : 'คัดลอกลิงก์เชิญ'}
-          </button>
-          {copyError && <p className="hud-room__summary" role="status">เลือกและคัดลอกลิงก์ด้านบนได้เลย</p>}
-        </>
-      ) : (
-        <>
-          {error && <p className="hud-room__error" role="alert">{error}</p>}
-          <button type="button" className="hud-text-button hud-text-button--primary"
-            disabled={status === 'connecting'} onClick={onConnect}>
-            <HudIcon name="people" /> {status === 'connecting' ? 'กำลังเชื่อมต่อห้อง…' : 'เปิดห้องออนไลน์ชวนแฟน'}
-          </button>
-          {status === 'connecting' && <p role="status" className="visually-hidden">กำลังเชื่อมต่อห้องออนไลน์</p>}
-        </>
-      )}
-      <button className="hud-text-button" type="button" onClick={() => {
-        onDismiss();
-        onManage();
-      }}>{status === 'connected' ? 'จัดการห้อง' : 'เข้าด้วยรหัสห้อง'}</button>
+    <>
+      <div className="hud-invite-actions">
+        <button type="button" className="hud-text-button hud-text-button--primary" onClick={() => void copy()}>
+          <HudIcon name="link" /> คัดลอกลิงก์
+        </button>
+        <button type="button" className="hud-text-button" onClick={() => void share()}>
+          <HudIcon name="share" /> แชร์
+        </button>
+      </div>
+      {manual && <label className="hud-invite">
+        ลิงก์คำเชิญ <input ref={field} type="url" readOnly value={url} />
+      </label>}
+      {feedback && <p className="hud-room__summary" role="status">{feedback}</p>}
+    </>
+  );
+}
+
+export function InvitationWaitingPanel({ roomCode, role }: { roomCode: string; role: 'p1' | 'p2' }) {
+  return (
+    <aside className="hud-invite-card hud-surface" aria-label="คำเชิญสำหรับคู่รัก">
+      <h2><HudIcon name="lotus" /> ที่ข้างคุณยังว่างอยู่</h2>
+      <p role="status">{role === 'p1' ? 'ส่งคำเชิญ แล้วเดินชมคืนเพ็ญระหว่างรอได้เลย' : 'รออีกคนกลับมา แล้วเริ่มภารกิจด้วยกัน'}</p>
+      {role === 'p1' && <InviteActions roomCode={roomCode} />}
+    </aside>
+  );
+}
+
+export function MultiplayerPanel({ roomCode, status, bothOnline, error, role, onDismiss }: {
+  roomCode: string;
+  status: RoomConnectionStatus;
+  bothOnline: boolean;
+  error: string | null;
+  role: 'p1' | 'p2';
+  onDismiss: () => void;
+}) {
+  return (
+    <HudDialog title="คืนเพ็ญของเราสองคน" onDismiss={onDismiss}>
+      <p className="hud-room__summary" role="status">
+        {status === 'connecting' ? error ?? 'กำลังกลับเข้าห้องเดิม…' :
+          bothOnline ? 'ตอนนี้คุณทั้งสองคนอยู่ในห้องเดียวกันแล้ว' :
+          'รออีกคนเข้ามา คุณเดินชมงานระหว่างรอได้'}
+      </p>
+      {status === 'connected' && !bothOnline && role === 'p1' && <InviteActions roomCode={roomCode} />}
     </HudDialog>
   );
 }
+

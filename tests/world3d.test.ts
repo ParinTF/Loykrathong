@@ -9,9 +9,10 @@ import { FestivalAssets, type FestivalModel } from '../src/game/festival/assets'
 import { createOffering } from '../src/game/festival/offerings';
 import { buildCharacter3DRig } from '../src/game/textures';
 
-describe('Three.js 3D Festival World, Avatars, Krathongs & Camera Math', () => {
-  it('constructs both character rigs and loads the Blender offerings with distinct quality tiers', async () => {
+describe('Three.js 3D Festival World, Avatars, Score-Free Offerings & Release Cinematic', () => {
+  it('constructs both character rigs (with accessories) and loads Blender offerings without quality-score gating', async () => {
     const state = createInitialGameState();
+    state.players.p1.customization.accessory = 'gold-lotus';
 
     const p1Rig = buildCharacter3DRig(state.players.p1);
     const p2Rig = buildCharacter3DRig(state.players.p2);
@@ -22,22 +23,37 @@ describe('Three.js 3D Festival World, Avatars, Krathongs & Camera Math', () => {
     const glb = readFileSync('public/models/festival/offerings.glb');
     const data = new ArrayBuffer(glb.byteLength);
     new Uint8Array(data).set(glb);
-    const { scene } = await new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).parseAsync(data, '');
+    const { scene } = await new GLTFLoader()
+      .setMeshoptDecoder(MeshoptDecoder)
+      .parseAsync(data, '');
     const parts = new Map<FestivalModel, THREE.Object3D>();
-    for (const name of ['BananaKrathong', 'CoconutKrathong', 'HeartKrathong', 'LotusCrown', 'MarigoldCrown', 'RoseCrown'] as const) {
+    for (const name of [
+      'BananaKrathong',
+      'CoconutKrathong',
+      'HeartKrathong',
+      'LotusCrown',
+      'MarigoldCrown',
+      'RoseCrown',
+    ] as const) {
       const object = scene.getObjectByName(name);
       expect(object).toBeDefined();
       if (object) parts.set(name, object);
     }
     const assets = new FestivalAssets(parts);
-    const classic = createOffering(assets, state.krathongDesign, 'classic');
-    const celestial = createOffering(assets, state.krathongDesign, 'celestial');
-    expect(celestial.group.children.length).toBeGreaterThan(classic.group.children.length);
-    expect(celestial.group.scale.x).toBeGreaterThan(classic.group.scale.x);
-    expect(new THREE.Box3().setFromObject(classic.group).getSize(new THREE.Vector3()).x).toBeGreaterThan(0.9);
+    const ambient = createOffering(assets, state.krathongDesign, 'ambient');
+    const couple = createOffering(assets, state.krathongDesign, 'couple');
+    expect(couple.group.children.length).toBeGreaterThan(
+      ambient.group.children.length
+    );
+    expect(couple.group.scale.x).toBeGreaterThan(ambient.group.scale.x);
+    expect(
+      new THREE.Box3()
+        .setFromObject(ambient.group)
+        .getSize(new THREE.Vector3()).x
+    ).toBeGreaterThan(0.9);
   });
 
-  it('cycles 3D camera presets and transforms movement vectors relative to 360-degree camera orbit', () => {
+  it('cycles 3D camera presets, transforms orbit vectors, and triggers/stops release cinematic cleanly', () => {
     const state = createInitialGameState();
     const scene = new FestivalScene(
       state,
@@ -45,14 +61,17 @@ describe('Three.js 3D Festival World, Avatars, Krathongs & Camera Math', () => {
       false
     );
 
-    // Default yaw = 0: pressing Up (0, -1) moves North (dx = 0, dy = -1)
     const northMove = scene.transformInputVector(0, -1);
     expect(northMove.dx).toBeCloseTo(0, 5);
     expect(northMove.dy).toBeCloseTo(-1, 5);
 
-    // Cycle camera presets: follow -> close -> overview -> follow
     expect(scene.cycleCameraPreset()).toBe('close');
     expect(scene.cycleCameraPreset()).toBe('overview');
     expect(scene.cycleCameraPreset()).toBe('follow');
+
+    const onDone = vi.fn();
+    scene.startReleaseCinematic('krathong-1', onDone);
+    scene.stopReleaseCinematic();
+    expect(onDone).toHaveBeenCalledTimes(1);
   });
 });

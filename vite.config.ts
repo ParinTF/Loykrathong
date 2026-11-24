@@ -8,12 +8,20 @@ function coupleRoomWsPlugin(): Plugin {
     name: 'loykratong-couple-room-ws',
     configureServer(server) {
       if (server.httpServer) {
-        createRoomHub().attachToServer(server.httpServer);
+        const hub = createRoomHub();
+        hub.attachToServer(server.httpServer);
+        server.middlewares.use((req, res, next) => {
+          if (!hub.handleInvitation(req, res)) next();
+        });
       }
     },
     configurePreviewServer(server) {
       if (server.httpServer) {
-        createRoomHub().attachToServer(server.httpServer);
+        const hub = createRoomHub();
+        hub.attachToServer(server.httpServer);
+        server.middlewares.use((req, res, next) => {
+          if (!hub.handleInvitation(req, res)) next();
+        });
       }
     },
   };

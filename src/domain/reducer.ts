@@ -1,22 +1,23 @@
-import {
-  areAllMinigamesPassed,
-  computeKrathongQuality,
-  createInitialMinigames,
-} from './minigames';
 import type {
+  CouplePoseId,
   Direction,
+  FortunePaperState,
   GameAction,
   GameState,
+  KrathongDecorationItem,
   KrathongDesign,
+  LeafCutShapeId,
+  LeafRelayState,
+  LotusBoatState,
   MaterialId,
-  MinigameId,
+  PierCeremonyState,
   PlayerId,
   PlayerPortrait,
   PlayerProfile,
   SharedRoomQuestState,
+  SkyLanternState,
 } from './types';
 import {
-  LANTERN_SPOTS,
   PLAYER_RADIUS,
   SPAWN_POSITIONS,
   findNearestSpot,
@@ -25,25 +26,36 @@ import {
 } from './worldMap';
 
 export const MATERIAL_LABELS: Record<MaterialId, { name: string; hint: string }> = {
-  'banana-leaf': {
-    name: 'ใบตองและหยวกกล้วย',
-    hint: 'คุยกับป้าบัวที่ตลาดริมคลอง',
-  },
   'lotus-blossom': {
-    name: 'ดอกบัวชมพูคู่รัก',
-    hint: 'เก็บที่แปลงบัวสวนหิ่งห้อย',
+    name: 'ดอกบัวชมพูจากสระหิ่งห้อย',
+    hint: 'พายเรือเก็บดอกบัวด้วยกันที่สวนหิ่งห้อย',
+  },
+  'banana-leaf': {
+    name: 'กลีบใบตองฝีมือสองเรา',
+    hint: 'ช่วยกันเจียนและพับใบตองที่ซุ้มป้าบัว',
   },
   'candle-incense': {
-    name: 'ธูปเทียนมงคล',
-    hint: 'คุยกับลุงมั่นที่ร้านเครื่องหอม',
+    name: 'ชุดธูปเทียนของขวัญจากลุงมั่น',
+    hint: 'เปิดกระดาษคำทำนายของเราสองคนที่ซุ้มลุงมั่น',
   },
 };
 
-export const MINIGAME_TITLES: Record<MinigameId, string> = {
-  recipe: 'ด่าน 1: ช้อนคัดยอดวัสดุสายน้ำ',
-  assembly: 'ด่าน 2: วางชั้นกระทงตรงแกนทอง',
-  rhythm: 'ด่าน 3: ประดับแสงเทียนตามจังหวะ',
-};
+export const LEAF_SHAPES_ORDER: LeafCutShapeId[] = ['swan', 'lotus', 'garuda'];
+
+export const FORTUNE_PROMPTS = [
+  'สถานที่ที่อยากจูงมือกันไปเที่ยวมากที่สุดคือที่ไหน?',
+  'ความทรงจำระหว่างเราที่นึกถึงทีไรก็ยิ้มออกทุกทีคือตอนไหน?',
+  'ถ้าคืนนี้ขอพรให้เราสองคนได้ 1 ข้อ อยากขออะไร?',
+  'สิ่งเล็กๆ ที่แฟนทำแล้วใจละลายที่สุดคืออะไร?',
+] as const;
+
+export const BOAT_LOTUS_TARGETS = [
+  { id: 'lotus-1', x: 24, y: 28, label: 'บัวชมพูใต้แสงดาว' },
+  { id: 'lotus-2', x: 52, y: 20, label: 'บัวหลวงกลางสระ' },
+  { id: 'lotus-3', x: 78, y: 34, label: 'บัวกลีบแก้วริมฝั่ง' },
+  { id: 'lotus-4', x: 66, y: 72, label: 'บัวหิ่งห้อยคู่รัก' },
+  { id: 'lotus-5', x: 28, y: 74, label: 'บัวจันทร์เพ็ญ' },
+] as const;
 
 export function createEmptyPortrait(): PlayerPortrait {
   return {
@@ -55,12 +67,77 @@ export function createEmptyPortrait(): PlayerPortrait {
   };
 }
 
+export function createDefaultDecorations(): KrathongDecorationItem[] {
+  return [
+    { id: 'init-1', kind: 'pink-lotus', x: 36, y: 48, scale: 1, placedBy: 'p1' },
+    { id: 'init-2', kind: 'pink-lotus', x: 64, y: 48, scale: 1, placedBy: 'p2' },
+    { id: 'init-3', kind: 'candle-spark', x: 50, y: 44, scale: 1.05, placedBy: 'p1' },
+  ];
+}
+
 export function createDefaultKrathongDesign(): KrathongDesign {
   return {
     base: 'classic-banana',
     flower: 'pink-lotus',
     glow: 'amber-candle',
-    wishText: 'ขอให้เราสองคนเดินเคียงข้างกันอย่างอบอุ่นในทุกเทศกาล',
+    wishText:
+      'ขอให้เราสองคนเดินเคียงข้างกันอย่างอบอุ่นในทุกเทศกาล แม้ในวันที่อยู่ไกลกัน',
+    decorations: createDefaultDecorations(),
+  };
+}
+
+export function createInitialLotusBoat(): LotusBoatState {
+  return {
+    rower: 'p1',
+    boatX: 16,
+    boatY: 52,
+    boatAngle: 0,
+    collectedIds: [],
+    completed: false,
+  };
+}
+
+export function createInitialLeafRelay(): LeafRelayState {
+  return {
+    cutter: 'p1',
+    cutStep: 0,
+    currentShape: 'swan',
+    passedLeafReady: false,
+    foldStep: 0,
+    finishedPetals: [],
+    completed: false,
+  };
+}
+
+export function createInitialFortunePaper(): FortunePaperState {
+  return {
+    promptIndex: 0,
+    p1Answer: '',
+    p2Answer: '',
+    p1Locked: false,
+    p2Locked: false,
+    revealed: false,
+    completed: false,
+  };
+}
+
+export function createInitialSkyLantern(): SkyLanternState {
+  return {
+    p1Wish: '',
+    p2Wish: '',
+    p1Lit: false,
+    p2Lit: false,
+    p1ReadyRelease: false,
+    p2ReadyRelease: false,
+    released: false,
+    releasedAt: null,
+  };
+}
+
+export function createInitialPierCeremony(): PierCeremonyState {
+  return {
+    p1Ready: false,
+    p2Ready: false,
   };
 }
 
@@ -70,10 +147,12 @@ export function createDefaultPlayers(): Record<PlayerId, PlayerProfile> {
       id: 'p1',
       name: 'ฟ้าใส',
       customization: {
+        gender: 'female',
         skinTone: 'warm-ivory',
         hairStyle: 'long-silky',
         hairColor: 'obsidian',
         outfit: 'silk-lotus',
+        accessory: 'none',
       },
       portrait: createEmptyPortrait(),
       position: { ...SPAWN_POSITIONS.p1 },
@@ -82,10 +161,12 @@ export function createDefaultPlayers(): Record<PlayerId, PlayerProfile> {
       id: 'p2',
       name: 'ต้นกล้า',
       customization: {
+        gender: 'male',
         skinTone: 'golden-tan',
         hairStyle: 'short-classic',
         hairColor: 'espresso',
         outfit: 'chut-thai-gold',
+        accessory: 'none',
       },
       portrait: createEmptyPortrait(),
       position: { ...SPAWN_POSITIONS.p2 },
@@ -95,8 +176,9 @@ export function createDefaultPlayers(): Record<PlayerId, PlayerProfile> {
 
 export function createInitialGameState(): GameState {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     screen: 'setup',
+    myRole: 'p1',
     players: createDefaultPlayers(),
     settings: {
       activePlayer: 'p1',
@@ -113,32 +195,37 @@ export function createInitialGameState(): GameState {
       'lotus-blossom': false,
       'candle-incense': false,
     },
-    litLanternIds: [],
-    pavilionBlessed: false,
-    contributedBy: { p1: 0, p2: 0 },
+    lotusBoat: createInitialLotusBoat(),
+    leafRelay: createInitialLeafRelay(),
+    fortunePaper: createInitialFortunePaper(),
+    skyLantern: createInitialSkyLantern(),
+    activePose: 'sit-moon',
+    photoMemories: [],
+    pierCeremony: createInitialPierCeremony(),
     questStage: 'explore',
-    minigames: createInitialMinigames(),
     krathongCrafted: false,
-    coopTasks: {},
     krathongDesign: createDefaultKrathongDesign(),
     releasedKrathongs: [],
     nearbySpotId: null,
-    lastEventLog: 'ยินดีต้อนรับสู่คืนเพ็ญริมน้ำ ปรับแต่งตัวละครคู่รักแล้วออกสำรวจงานกันเลย',
+    lastEventLog:
+      'ยินดีต้อนรับสู่ค่ำคืนวันเพ็ญ เดินเล่น แวะถ่ายรูป หรือทำกระทงด้วยกันได้ตามใจชอบเลย',
   };
 }
 
 export function extractSharedQuestState(state: GameState): SharedRoomQuestState {
   return {
     inventory: state.inventory,
-    litLanternIds: state.litLanternIds,
-    pavilionBlessed: state.pavilionBlessed,
-    contributedBy: state.contributedBy,
-    questStage: state.questStage,
-    minigames: state.minigames,
+    lotusBoat: state.lotusBoat,
+    leafRelay: state.leafRelay,
+    fortunePaper: state.fortunePaper,
+    skyLantern: state.skyLantern,
+    activePose: state.activePose,
+    photoMemories: state.photoMemories,
+    pierCeremony: state.pierCeremony,
     krathongCrafted: state.krathongCrafted,
-    coopTasks: state.coopTasks,
     krathongDesign: state.krathongDesign,
     releasedKrathongs: state.releasedKrathongs,
+    questStage: state.questStage,
     lastEventLog: state.lastEventLog,
   };
 }
@@ -149,36 +236,23 @@ export function countCollectedMaterials(
   return Object.values(inventory).filter(Boolean).length;
 }
 
-export function hasAllMaterials(inventory: Record<MaterialId, boolean>): boolean {
-  return countCollectedMaterials(inventory) === 3;
+export function countSharedMemories(state: GameState): number {
+  let total = 0;
+  if (state.lotusBoat.completed) total += 1;
+  if (state.leafRelay.completed) total += 1;
+  if (state.fortunePaper.revealed) total += 1;
+  if (state.skyLantern.released) total += 1;
+  if (state.krathongCrafted) total += 1;
+  if (state.photoMemories.length > 0) total += 1;
+  if (state.releasedKrathongs.length > 0) total += 1;
+  return total;
 }
 
-export function canCraftKrathong(state: GameState): boolean {
-  return hasAllMaterials(state.inventory) && areAllMinigamesPassed(state.minigames);
-}
-
-export function canReleaseKrathong(state: GameState): boolean {
-  return (
-    state.krathongCrafted &&
-    hasAllMaterials(state.inventory) &&
-    areAllMinigamesPassed(state.minigames)
-  );
-}
-
-export function getCoupleProgressPercent(
-  state: Pick<GameState, 'inventory' | 'minigames' | 'krathongCrafted' | 'releasedKrathongs'>
-): number {
-  const matCount = countCollectedMaterials(state.inventory);
-  let score = matCount * 15; // 0..45
-  if (state.minigames.recipe.status === 'passed') score += 10;
-  if (state.minigames.assembly.status === 'passed') score += 10;
-  if (state.minigames.rhythm.status === 'passed') score += 10;
-  if (state.krathongCrafted) score += 10; // 85
-  if (state.releasedKrathongs.length > 0) score += 15; // 100
-  return Math.min(100, score);
-}
-
-export function deriveDirection(dx: number, dy: number, fallback: Direction): Direction {
+export function deriveDirection(
+  dx: number,
+  dy: number,
+  fallback: Direction
+): Direction {
   if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return fallback;
   if (Math.abs(dx) >= Math.abs(dy)) {
     return dx >= 0 ? 'right' : 'left';
@@ -199,19 +273,24 @@ function partnerFollowStep(
   const offset = offsetByFacing[leader.position.facing];
   const targetX = leader.position.x + offset.ox;
   const targetY = leader.position.y + offset.oy;
-
   const dx = targetX - partner.position.x;
   const dy = targetY - partner.position.y;
   const dist = Math.hypot(dx, dy);
 
-  if (dist < 10) {
-    return partner;
+  if (dist < 6) {
+    return {
+      ...partner,
+      position: {
+        ...partner.position,
+        facing: leader.position.facing,
+      },
+    };
   }
 
-  const maxStep = Math.min(dist, 5.2);
+  const maxStep = Math.min(dist, 5.4);
   const stepX = (dx / dist) * maxStep;
   const stepY = (dy / dist) * maxStep;
-  const moved = resolveMovement(
+  const resolved = resolveMovement(
     partner.position.x,
     partner.position.y,
     stepX,
@@ -219,43 +298,14 @@ function partnerFollowStep(
     PLAYER_RADIUS
   );
 
-  if (!moved.moved) {
-    const directDx = leader.position.x - partner.position.x;
-    const directDy = leader.position.y - partner.position.y;
-    const directDist = Math.hypot(directDx, directDy);
-    if (directDist > 52) {
-      const alt = resolveMovement(
-        partner.position.x,
-        partner.position.y,
-        (directDx / directDist) * maxStep,
-        (directDy / directDist) * maxStep,
-        PLAYER_RADIUS
-      );
-      return {
-        ...partner,
-        position: {
-          x: alt.x,
-          y: alt.y,
-          facing: deriveDirection(directDx, directDy, leader.position.facing),
-        },
-      };
-    }
-    return partner;
-  }
-
   return {
     ...partner,
     position: {
-      x: moved.x,
-      y: moved.y,
-      facing: deriveDirection(dx, dy, leader.position.facing),
+      x: resolved.x,
+      y: resolved.y,
+      facing: deriveDirection(stepX, stepY, leader.position.facing),
     },
   };
-}
-
-export function sanitizePlayerName(raw: string, fallback: string): string {
-  const trimmed = raw.trim().slice(0, 24);
-  return trimmed.length > 0 ? trimmed : fallback;
 }
 
 function computeActiveNearbySpotId(
@@ -266,29 +316,44 @@ function computeActiveNearbySpotId(
   return findNearestSpot(activePos.x, activePos.y)?.id ?? null;
 }
 
+function clampCanvasCoord(val: number): number {
+  return Math.max(12, Math.min(88, Math.round(val)));
+}
+
 export function gameReducer(state: GameState, action: GameAction): GameState {
   switch (action.type) {
     case 'HYDRATE_STATE': {
-      const p1Pos = isPositionWalkable(
-        action.payload.players.p1.position.x,
-        action.payload.players.p1.position.y
-      )
-        ? action.payload.players.p1.position
+      const p1Raw = action.payload.players.p1.position;
+      const p2Raw = action.payload.players.p2.position;
+      const p1Pos = isPositionWalkable(p1Raw.x, p1Raw.y)
+        ? p1Raw
         : { ...SPAWN_POSITIONS.p1 };
-      const p2Pos = isPositionWalkable(
-        action.payload.players.p2.position.x,
-        action.payload.players.p2.position.y
-      )
-        ? action.payload.players.p2.position
+      const p2Pos = isPositionWalkable(p2Raw.x, p2Raw.y)
+        ? p2Raw
         : { ...SPAWN_POSITIONS.p2 };
-
       const hydratedPlayers: Record<PlayerId, PlayerProfile> = {
-        p1: { ...action.payload.players.p1, position: p1Pos },
-        p2: { ...action.payload.players.p2, position: p2Pos },
+        p1: {
+          ...action.payload.players.p1,
+          customization: {
+            ...createDefaultPlayers().p1.customization,
+            ...action.payload.players.p1.customization,
+          },
+          position: p1Pos,
+        },
+        p2: {
+          ...action.payload.players.p2,
+          customization: {
+            ...createDefaultPlayers().p2.customization,
+            ...action.payload.players.p2.customization,
+          },
+          position: p2Pos,
+        },
       };
-
       return {
         ...action.payload,
+        schemaVersion: 2,
+        screen: state.screen === 'world' ? 'world' : action.payload.screen,
+        myRole: action.payload.myRole === 'p2' ? 'p2' : 'p1',
         players: hydratedPlayers,
         nearbySpotId: computeActiveNearbySpotId(
           hydratedPlayers,
@@ -298,21 +363,14 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
     }
 
     case 'ENTER_WORLD': {
-      const p1Name = sanitizePlayerName(state.players.p1.name, 'ฟ้าใส');
-      const p2Name = sanitizePlayerName(state.players.p2.name, 'ต้นกล้า');
-      const nextPlayers: Record<PlayerId, PlayerProfile> = {
-        p1: { ...state.players.p1, name: p1Name },
-        p2: { ...state.players.p2, name: p2Name },
-      };
       return {
         ...state,
         screen: 'world',
-        players: nextPlayers,
         nearbySpotId: computeActiveNearbySpotId(
-          nextPlayers,
+          state.players,
           state.settings.activePlayer
         ),
-        lastEventLog: `${p1Name} และ ${p2Name} เดินเข้าสู่งานลอยกระทงริมน้ำแล้ว`,
+        lastEventLog: `${state.players.p1.name} และ ${state.players.p2.name} เข้าสู่ค่ำคืนวันเพ็ญริมน้ำแล้ว`,
       };
     }
 
@@ -322,16 +380,26 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         screen: 'setup',
       };
 
+    case 'SET_MY_ROLE':
+      return {
+        ...state,
+        myRole: action.role,
+        settings: {
+          ...state.settings,
+          activePlayer: action.role,
+        },
+        nearbySpotId: computeActiveNearbySpotId(state.players, action.role),
+      };
+
     case 'UPDATE_PLAYER_NAME': {
-      const nextName = action.name.slice(0, 24);
-      const target = state.players[action.playerId];
+      const trimmed = action.name.slice(0, 24);
       return {
         ...state,
         players: {
           ...state.players,
           [action.playerId]: {
-            ...target,
-            name: nextName,
+            ...state.players[action.playerId],
+            name: trimmed,
           },
         },
       };
@@ -390,26 +458,24 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
           activePlayer: action.playerId,
         },
         nearbySpotId: computeActiveNearbySpotId(state.players, action.playerId),
+        lastEventLog: `สลับมาควบคุม ${state.players[action.playerId].name}`,
       };
 
-    case 'TOGGLE_FOLLOW_PARTNER':
+    case 'TOGGLE_FOLLOW_PARTNER': {
+      const nextFollow = !state.settings.followPartner;
       return {
         ...state,
         settings: {
           ...state.settings,
-          followPartner: !state.settings.followPartner,
+          followPartner: nextFollow,
         },
-        nearbySpotId: computeActiveNearbySpotId(
-          state.players,
-          state.settings.activePlayer
-        ),
-        lastEventLog: !state.settings.followPartner
-          ? 'เปิดโหมดเดินคู่กัน: อีกฝ่ายจะเดินเคียงข้างอัตโนมัติ'
-          : 'เปิดโหมดแยกเดินอิสระ',
+        lastEventLog: nextFollow
+          ? 'เปิดโหมดเดินจูงมือคู่กันแล้ว'
+          : 'สลับเป็นโหมดแยกเดินสำรวจอิสระ',
       };
+    }
 
     case 'SET_FOLLOW_PARTNER':
-      if (state.settings.followPartner === action.enabled) return state;
       return {
         ...state,
         settings: {
@@ -437,288 +503,522 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       };
 
     case 'SET_PRESENTATION_SETTINGS':
-      return { ...state, settings: { ...state.settings, ...action.patch } };
+      return {
+        ...state,
+        settings: {
+          ...state.settings,
+          ...action.patch,
+        },
+      };
 
     case 'MOVE_PLAYER': {
-      const mover = state.players[action.playerId];
-      const moved = resolveMovement(
-        mover.position.x,
-        mover.position.y,
+      const leader = state.players[action.playerId];
+      const nextFacing =
+        action.facing ?? deriveDirection(action.dx, action.dy, leader.position.facing);
+      const resolved = resolveMovement(
+        leader.position.x,
+        leader.position.y,
         action.dx,
         action.dy,
         PLAYER_RADIUS
       );
-      const facing =
-        action.facing ?? deriveDirection(action.dx, action.dy, mover.position.facing);
 
-      const updatedMover: PlayerProfile = {
-        ...mover,
+      if (
+        !resolved.moved &&
+        nextFacing === leader.position.facing &&
+        state.nearbySpotId ===
+          (findNearestSpot(leader.position.x, leader.position.y)?.id ?? null)
+      ) {
+        return state;
+      }
+
+      const updatedLeader: PlayerProfile = {
+        ...leader,
         position: {
-          x: moved.x,
-          y: moved.y,
-          facing,
+          x: resolved.x,
+          y: resolved.y,
+          facing: nextFacing,
         },
       };
 
       const partnerId: PlayerId = action.playerId === 'p1' ? 'p2' : 'p1';
       let updatedPartner = state.players[partnerId];
-      if (state.settings.followPartner && action.playerId === state.settings.activePlayer) {
-        updatedPartner = partnerFollowStep(updatedMover, updatedPartner);
+      if (state.settings.followPartner && resolved.moved) {
+        updatedPartner = partnerFollowStep(updatedLeader, updatedPartner);
       }
 
-      const activePlayerProfile =
-        state.settings.activePlayer === action.playerId ? updatedMover : updatedPartner;
-      const nearby = findNearestSpot(
-        activePlayerProfile.position.x,
-        activePlayerProfile.position.y
-      );
+      const nextPlayers: Record<PlayerId, PlayerProfile> = {
+        ...state.players,
+        [action.playerId]: updatedLeader,
+        [partnerId]: updatedPartner,
+      };
+
+      const activePlayer = state.players[state.settings.activePlayer]
+        ? state.settings.activePlayer
+        : action.playerId;
 
       return {
         ...state,
-        players: {
-          ...state.players,
-          [action.playerId]: updatedMover,
-          [partnerId]: updatedPartner,
-        },
-        nearbySpotId: nearby?.id ?? null,
+        players: nextPlayers,
+        nearbySpotId: computeActiveNearbySpotId(nextPlayers, activePlayer),
       };
     }
 
     case 'SET_NEARBY_SPOT':
-      if (state.nearbySpotId === action.spotId) return state;
-      return {
-        ...state,
-        nearbySpotId: action.spotId,
-      };
+      return state.nearbySpotId === action.spotId
+        ? state
+        : { ...state, nearbySpotId: action.spotId };
 
-    case 'RECORD_COOP_HALF': {
-      const prev = state.coopTasks[action.taskKey] ?? {
-        p1Done: false,
-        p2Done: false,
-        p1Score: 0,
-        p2Score: 0,
-        updatedAt: null,
+    // =========================================================================
+    // 01 — พายเรือเก็บดอกบัวด้วยกัน (Boat Lotus Gathering)
+    // =========================================================================
+    case 'UPDATE_LOTUS_BOAT': {
+      const nextBoat: LotusBoatState = {
+        ...state.lotusBoat,
+        ...action.patch,
       };
-      const clamped = Math.max(0, Math.min(50, Math.round(action.halfScore)));
-      const nextEntry =
-        action.playerId === 'p1'
-          ? {
-              ...prev,
-              p1Done: true,
-              p1Score: Math.max(prev.p1Score, clamped),
-              updatedAt: new Date().toISOString(),
-            }
-          : {
-              ...prev,
-              p2Done: true,
-              p2Score: Math.max(prev.p2Score, clamped),
-              updatedAt: new Date().toISOString(),
-            };
-      const actorName = sanitizePlayerName(
-        state.players[action.playerId].name,
-        action.playerId === 'p1' ? 'ผู้เล่น 1' : 'ผู้เล่น 2'
-      );
-      const bothDone = nextEntry.p1Done && nextEntry.p2Done;
+      const swapped = action.patch.rower && action.patch.rower !== state.lotusBoat.rower;
+      const rowerName = state.players[nextBoat.rower].name;
       return {
         ...state,
-        coopTasks: {
-          ...state.coopTasks,
-          [action.taskKey]: nextEntry,
+        lotusBoat: nextBoat,
+        lastEventLog: swapped
+          ? `สลับหน้าที่แล้ว! ตอนนี้ ${rowerName} เป็นคนพายเรือ อีกคนช่วยเก็บดอกบัวชมพู`
+          : state.lastEventLog,
+      };
+    }
+
+    case 'PICK_BOAT_LOTUS': {
+      if (state.lotusBoat.collectedIds.includes(action.lotusId)) return state;
+      const nextCollected = [...state.lotusBoat.collectedIds, action.lotusId];
+      const finished = nextCollected.length >= BOAT_LOTUS_TARGETS.length;
+      const pickerName = state.players[action.byPlayer].name;
+      return {
+        ...state,
+        lotusBoat: {
+          ...state.lotusBoat,
+          collectedIds: nextCollected,
+          completed: state.lotusBoat.completed || finished,
         },
-        lastEventLog: bothDone
-          ? `ทั้งคู่ช่วยกันผ่านภารกิจคู่รักสำเร็จแล้ว! กดรับรางวัลด้วยกันได้เลย`
-          : `${actorName} ทำส่วนของตัวเองสำเร็จแล้ว! รอคู่รักอีกฝ่ายมาช่วยต่อให้ครบ`,
+        inventory: finished
+          ? { ...state.inventory, 'lotus-blossom': true }
+          : state.inventory,
+        lastEventLog: finished
+          ? `ทั้งคู่พายเรือเก็บดอกบัวชมพูครบท่ามกลางแสงหิ่งห้อยแล้ว!`
+          : `${pickerName} เก็บดอกบัวชมพูขึ้นเรือได้แล้ว (${nextCollected.length}/${BOAT_LOTUS_TARGETS.length} ดอก)`,
       };
     }
 
-    case 'RESET_COOP_TASK': {
-      if (!state.coopTasks[action.taskKey]) return state;
-      const nextCoop = { ...state.coopTasks };
-      delete nextCoop[action.taskKey];
+    // =========================================================================
+    // 02 — ช่วยกันพับใบตอง (Real-Time Leaf Cut -> Fold Relay)
+    // =========================================================================
+    case 'UPDATE_LEAF_RELAY': {
+      const nextRelay: LeafRelayState = {
+        ...state.leafRelay,
+        ...action.patch,
+      };
+      const swapped = action.patch.cutter && action.patch.cutter !== state.leafRelay.cutter;
+      const cutterName = state.players[nextRelay.cutter].name;
       return {
         ...state,
-        coopTasks: nextCoop,
+        leafRelay: nextRelay,
+        lastEventLog: swapped
+          ? `สลับหน้าที่พับใบตองแล้ว! ${cutterName} เจียนใบตอง อีกคนรอรับมาพับกลีบ`
+          : state.lastEventLog,
       };
     }
 
-    case 'COLLECT_MATERIAL': {
-      const alreadyHas = state.inventory[action.material];
-      const nextInventory = {
-        ...state.inventory,
-        [action.material]: true,
-      };
-      const nextQuestStage =
-        state.questStage === 'explore' && hasAllMaterials(nextInventory)
-          ? 'craft'
-          : state.questStage;
-      const label = MATERIAL_LABELS[action.material].name;
-      const actorName = sanitizePlayerName(
-        state.players[action.byPlayer].name,
-        action.byPlayer === 'p1' ? 'ผู้เล่น 1' : 'ผู้เล่น 2'
-      );
-
+    case 'ADVANCE_LEAF_CUT': {
+      if (state.leafRelay.passedLeafReady) return state;
+      const nextStep = Math.min(3, state.leafRelay.cutStep + 1);
+      const readyToPass = nextStep >= 3;
+      const cutterName = state.players[action.byPlayer].name;
       return {
         ...state,
-        inventory: nextInventory,
-        questStage: nextQuestStage,
-        contributedBy: alreadyHas
-          ? state.contributedBy
-          : {
-              ...state.contributedBy,
-              [action.byPlayer]: state.contributedBy[action.byPlayer] + 1,
-            },
-        lastEventLog:
-          action.message ??
-          (alreadyHas
-            ? `${actorName} ตรวจเช็ก${label}ที่มีอยู่แล้ว`
-            : hasAllMaterials(nextInventory)
-              ? `${actorName} เก็บ${label}ครบทั้ง 3 อย่างแล้ว! ไปที่โต๊ะประดิษฐ์กระทงเพื่อเล่น 3 ด่านประดิษฐ์กันเถอะ`
-              : `${actorName} เก็บ${label}เรียบร้อย (${countCollectedMaterials(nextInventory)}/3)`),
+        leafRelay: {
+          ...state.leafRelay,
+          cutStep: nextStep,
+          passedLeafReady: readyToPass,
+        },
+        lastEventLog: readyToPass
+          ? `${cutterName} เจียนใบตองเสร็จแล้ว! ส่งต่อใบตองสดให้อีกฝ่ายพับกลีบได้เลย`
+          : `${cutterName} กำลังเจียนขอบใบตองอย่างบรรจง (${nextStep}/3)`,
       };
     }
 
-    case 'LIGHT_LANTERN': {
-      if (state.litLanternIds.includes(action.lanternId)) {
+    case 'ADVANCE_LEAF_FOLD': {
+      if (!state.leafRelay.passedLeafReady) return state;
+      const nextFold = Math.min(3, state.leafRelay.foldStep + 1);
+      const folderName = state.players[action.byPlayer].name;
+      if (nextFold < 3) {
         return {
           ...state,
-          lastEventLog: 'โคมดวงนี้ส่องสว่างอบอุ่นอยู่แล้ว',
+          leafRelay: {
+            ...state.leafRelay,
+            foldStep: nextFold,
+          },
+          lastEventLog: `${folderName} พับกลีบใบตองอย่างประณีต (${nextFold}/3)`,
         };
       }
-      const nextLit = [...state.litLanternIds, action.lanternId];
-      const actorName = sanitizePlayerName(
-        state.players[action.byPlayer].name,
-        action.byPlayer === 'p1' ? 'ผู้เล่น 1' : 'ผู้เล่น 2'
-      );
+
+      const nextFinished = state.leafRelay.finishedPetals.includes(
+        state.leafRelay.currentShape
+      )
+        ? state.leafRelay.finishedPetals
+        : [...state.leafRelay.finishedPetals, state.leafRelay.currentShape];
+
+      const completed = nextFinished.length >= LEAF_SHAPES_ORDER.length;
+      const nextShape =
+        LEAF_SHAPES_ORDER.find((shape) => !nextFinished.includes(shape)) ??
+        state.leafRelay.currentShape;
+
       return {
         ...state,
-        litLanternIds: nextLit,
-        contributedBy: {
-          ...state.contributedBy,
-          [action.byPlayer]: state.contributedBy[action.byPlayer] + 1,
+        leafRelay: {
+          ...state.leafRelay,
+          cutStep: 0,
+          foldStep: 0,
+          passedLeafReady: false,
+          currentShape: nextShape,
+          finishedPetals: nextFinished,
+          completed: state.leafRelay.completed || completed,
         },
-        lastEventLog: `${actorName} จุดโคมยี่เป็งส่องแสงแล้ว (${nextLit.length}/${LANTERN_SPOTS.length} ดวง)`,
+        inventory: completed
+          ? { ...state.inventory, 'banana-leaf': true }
+          : state.inventory,
+        lastEventLog: completed
+          ? `ป้าบัวชื่นชม! ทั้งคู่ช่วยกันเจียนและพับกลีบใบตองครบทั้ง 3 แบบสวยงามมาก`
+          : `${folderName} พับกลีบเสร็จเรียบร้อย! ส่งต่อให้เจียนกลีบต่อไปกันเลย`,
       };
     }
 
-    case 'BLESS_PAVILION': {
-      const p1Name = sanitizePlayerName(state.players.p1.name, 'ฟ้าใส');
-      const p2Name = sanitizePlayerName(state.players.p2.name, 'ต้นกล้า');
+    // =========================================================================
+    // 03 — กระดาษคำทำนายของเราสองคน (Blind Q&A + Simultaneous Reveal)
+    // =========================================================================
+    case 'SET_FORTUNE_PROMPT': {
+      const idx =
+        ((action.promptIndex % FORTUNE_PROMPTS.length) + FORTUNE_PROMPTS.length) %
+        FORTUNE_PROMPTS.length;
       return {
         ...state,
-        pavilionBlessed: true,
-        contributedBy: state.pavilionBlessed
-          ? state.contributedBy
-          : {
-              ...state.contributedBy,
-              [action.byPlayer]: state.contributedBy[action.byPlayer] + 1,
-            },
-        lastEventLog: `${p1Name} และ ${p2Name} อธิษฐานรับแสงจันทร์ร่วมกันที่ศาลาคู่รัก`,
+        fortunePaper: {
+          promptIndex: idx,
+          p1Answer: '',
+          p2Answer: '',
+          p1Locked: false,
+          p2Locked: false,
+          revealed: false,
+          completed: state.fortunePaper.completed,
+        },
+        lastEventLog: 'เปลี่ยนคำถามกระดาษคำทำนายใบใหม่แล้ว ลองแอบเขียนคำตอบกันเลย',
       };
     }
 
-    case 'COMPLETE_MINIGAME': {
-      const prev = state.minigames[action.gameId];
-      const clampedScore = Math.max(0, Math.min(100, Math.round(action.score)));
-      const nextRecord = {
-        status: action.passed ? ('passed' as const) : ('failed' as const),
-        score: action.passed ? Math.max(prev.score, clampedScore) : clampedScore,
-        attempts: prev.attempts + 1,
-      };
-      const nextMinigames = {
-        ...state.minigames,
-        [action.gameId]: nextRecord,
-      };
-      const title = MINIGAME_TITLES[action.gameId];
-      return {
-        ...state,
-        minigames: nextMinigames,
-        contributedBy: action.passed
-          ? {
-              ...state.contributedBy,
-              [action.byPlayer]: state.contributedBy[action.byPlayer] + 1,
-            }
-          : state.contributedBy,
-        lastEventLog: action.passed
-          ? `ผ่าน${title} (${clampedScore} คะแนน)!`
-          : `ยังไม่ผ่าน${title} สามารถกดเล่นซ้ำได้ทันที`,
-      };
-    }
-
-    case 'RESET_MINIGAME': {
-      const prev = state.minigames[action.gameId];
-      return {
-        ...state,
-        minigames: {
-          ...state.minigames,
-          [action.gameId]: {
-            status: 'pending',
-            score: 0,
-            attempts: prev.attempts,
+    case 'SET_FORTUNE_ANSWER': {
+      const cleaned = action.answer.slice(0, 140);
+      if (action.playerId === 'p1') {
+        if (state.fortunePaper.p1Locked) return state;
+        return {
+          ...state,
+          fortunePaper: {
+            ...state.fortunePaper,
+            p1Answer: cleaned,
           },
+        };
+      }
+      if (state.fortunePaper.p2Locked) return state;
+      return {
+        ...state,
+        fortunePaper: {
+          ...state.fortunePaper,
+          p2Answer: cleaned,
         },
       };
     }
 
-    case 'UPDATE_KRATHONG_DESIGN':
+    case 'LOCK_FORTUNE_ANSWER': {
+      const fp = state.fortunePaper;
+      const answer = action.playerId === 'p1' ? fp.p1Answer.trim() : fp.p2Answer.trim();
+      if (!answer) return state;
+
+      const nextFp: FortunePaperState = {
+        ...fp,
+        p1Locked: action.playerId === 'p1' ? true : fp.p1Locked,
+        p2Locked: action.playerId === 'p2' ? true : fp.p2Locked,
+      };
+      const bothLocked = nextFp.p1Locked && nextFp.p2Locked;
+      if (bothLocked) {
+        nextFp.revealed = true;
+        nextFp.completed = true;
+      }
+
+      const actorName = state.players[action.playerId].name;
+      return {
+        ...state,
+        fortunePaper: nextFp,
+        inventory: bothLocked
+          ? { ...state.inventory, 'candle-incense': true }
+          : state.inventory,
+        lastEventLog: bothLocked
+          ? `เปิดกระดาษคำทำนายพร้อมกันแล้ว! ลุงมั่นยิ้มอย่างอบอุ่นและมอบชุดธูปเทียนมงคลให้เป็นของขวัญ`
+          : `${actorName} ปิดผนึกคำตอบไว้แล้ว รออีกฝ่ายเขียนเสร็จเพื่อเปิดอ่านพร้อมกัน`,
+      };
+    }
+
+    case 'RESET_FORTUNE_ROUND': {
+      const nextIdx =
+        typeof action.promptIndex === 'number'
+          ? ((action.promptIndex % FORTUNE_PROMPTS.length) + FORTUNE_PROMPTS.length) %
+            FORTUNE_PROMPTS.length
+          : (state.fortunePaper.promptIndex + 1) % FORTUNE_PROMPTS.length;
+      return {
+        ...state,
+        fortunePaper: {
+          promptIndex: nextIdx,
+          p1Answer: '',
+          p2Answer: '',
+          p1Locked: false,
+          p2Locked: false,
+          revealed: false,
+          completed: state.fortunePaper.completed,
+        },
+        lastEventLog: 'หยิบกระดาษคำทำนายคู่รักใบใหม่มาเขียนต่อกันเลย',
+      };
+    }
+
+    // =========================================================================
+    // 04 — ส่งความปรารถนาขึ้นสู่ท้องฟ้า (1 Meaningful Sky Lantern)
+    // =========================================================================
+    case 'SET_LANTERN_WISH': {
+      if (state.skyLantern.released) return state;
+      const cleaned = action.wish.slice(0, 110);
+      return {
+        ...state,
+        skyLantern:
+          action.playerId === 'p1'
+            ? { ...state.skyLantern, p1Wish: cleaned }
+            : { ...state.skyLantern, p2Wish: cleaned },
+      };
+    }
+
+    case 'LIGHT_LANTERN_SIDE': {
+      if (state.skyLantern.released) return state;
+      const nextLantern: SkyLanternState = {
+        ...state.skyLantern,
+        p1Lit: action.playerId === 'p1' ? true : state.skyLantern.p1Lit,
+        p2Lit: action.playerId === 'p2' ? true : state.skyLantern.p2Lit,
+      };
+      const bothLit = nextLantern.p1Lit && nextLantern.p2Lit;
+      const actorName = state.players[action.playerId].name;
+      return {
+        ...state,
+        skyLantern: nextLantern,
+        lastEventLog: bothLit
+          ? 'ไฟโคมสว่างอุ่นพร้อมแล้ว ทั้งคู่กดเตรียมปล่อยเพื่อนับถอยหลังส่งโคมขึ้นฟ้าพร้อมกัน!'
+          : `${actorName} ช่วยประคองและจุดไฟโคมด้านของตัวเองแล้ว`,
+      };
+    }
+
+    case 'READY_RELEASE_LANTERN': {
+      if (state.skyLantern.released) return state;
+      const nextLantern: SkyLanternState = {
+        ...state.skyLantern,
+        p1ReadyRelease:
+          action.playerId === 'p1' ? true : state.skyLantern.p1ReadyRelease,
+        p2ReadyRelease:
+          action.playerId === 'p2' ? true : state.skyLantern.p2ReadyRelease,
+      };
+      const actorName = state.players[action.playerId].name;
+      return {
+        ...state,
+        skyLantern: nextLantern,
+        lastEventLog:
+          nextLantern.p1ReadyRelease && nextLantern.p2ReadyRelease
+            ? 'ทั้งสองคนพร้อมแล้ว! เริ่มนับถอยหลังส่งโคมคำอธิษฐานขึ้นสู่ท้องฟ้า…'
+            : `${actorName} พร้อมปล่อยโคมแล้ว รออีกฝ่ายแตะปล่อยพร้อมกัน`,
+      };
+    }
+
+    case 'COMPLETE_LANTERN_RELEASE': {
+      if (state.skyLantern.released) return state;
+      return {
+        ...state,
+        skyLantern: {
+          ...state.skyLantern,
+          p1Lit: true,
+          p2Lit: true,
+          p1ReadyRelease: true,
+          p2ReadyRelease: true,
+          released: true,
+          releasedAt: action.timestamp ?? new Date().toISOString(),
+        },
+        lastEventLog: `โคมความปรารถนาของ ${state.players.p1.name} และ ${state.players.p2.name} ลอยสว่างไสวขึ้นสู่ท้องฟ้ายามค่ำคืนแล้ว!`,
+      };
+    }
+
+    // =========================================================================
+    // 06 — สร้างกระทงที่มีเพียงใบเดียวในโลก (Real-Time Shared Studio)
+    // =========================================================================
+    case 'UPDATE_KRATHONG_DESIGN': {
+      const nextDesign: KrathongDesign = {
+        ...state.krathongDesign,
+        ...action.patch,
+        decorations:
+          action.patch.decorations ?? state.krathongDesign.decorations,
+      };
+      return {
+        ...state,
+        krathongDesign: nextDesign,
+      };
+    }
+
+    case 'ADD_KRATHONG_DECORATION': {
+      const current = state.krathongDesign.decorations;
+      if (current.length >= 24) return state;
+      const clamped: KrathongDecorationItem = {
+        ...action.item,
+        x: clampCanvasCoord(action.item.x),
+        y: clampCanvasCoord(action.item.y),
+      };
       return {
         ...state,
         krathongDesign: {
           ...state.krathongDesign,
-          ...action.patch,
+          decorations: [...current, clamped],
+        },
+        lastEventLog: `${state.players[clamped.placedBy].name} วางของตกแต่งลงบนกระทงคู่`,
+      };
+    }
+
+    case 'MOVE_KRATHONG_DECORATION': {
+      const nextX = clampCanvasCoord(action.x);
+      const nextY = clampCanvasCoord(action.y);
+      return {
+        ...state,
+        krathongDesign: {
+          ...state.krathongDesign,
+          decorations: state.krathongDesign.decorations.map((item) =>
+            item.id === action.id ? { ...item, x: nextX, y: nextY } : item
+          ),
         },
       };
+    }
+
+    case 'REMOVE_KRATHONG_DECORATION': {
+      return {
+        ...state,
+        krathongDesign: {
+          ...state.krathongDesign,
+          decorations: state.krathongDesign.decorations.filter(
+            (item) => item.id !== action.id
+          ),
+        },
+      };
+    }
+
+    case 'CLEAR_KRATHONG_DECORATIONS': {
+      return {
+        ...state,
+        krathongDesign: {
+          ...state.krathongDesign,
+          decorations: [],
+        },
+        lastEventLog: 'จัดวางหน้ากระทงใหม่เพื่อตกแต่งด้วยกันอีกครั้ง',
+      };
+    }
 
     case 'CRAFT_KRATHONG': {
-      if (!hasAllMaterials(state.inventory)) {
-        return {
-          ...state,
-          lastEventLog: 'ต้องเก็บวัสดุให้ครบทั้ง 3 อย่างก่อนประดิษฐ์กระทง',
-        };
-      }
-      if (!areAllMinigamesPassed(state.minigames)) {
-        return {
-          ...state,
-          lastEventLog: 'กรุณาเล่นมินิเกมประดิษฐ์กระทงให้ผ่านครบทั้ง 3 ด่านก่อนนำไปลอย',
-        };
-      }
-      const actorName = sanitizePlayerName(
-        state.players[action.byPlayer].name,
-        action.byPlayer === 'p1' ? 'ผู้เล่น 1' : 'ผู้เล่น 2'
-      );
-      const quality = computeKrathongQuality(state.minigames);
+      const actorName = state.players[action.byPlayer].name;
       return {
         ...state,
         krathongCrafted: true,
-        questStage: 'ceremony',
-        contributedBy: {
-          ...state.contributedBy,
-          [action.byPlayer]: state.contributedBy[action.byPlayer] + 1,
-        },
-        lastEventLog: `${actorName} ประกอบกระทงระดับ "${quality.tierTitle}" สำเร็จ! เดินไปที่ท่าน้ำแสงจันทร์เพื่อทำพิธี`,
+        questStage: state.releasedKrathongs.length > 0 ? 'released' : 'ceremony',
+        lastEventLog: `${actorName} บันทึกกระทงที่มีเพียงใบเดียวในโลกของเราเรียบร้อย พร้อมพาไปท่าน้ำได้ทุกเมื่อ`,
+      };
+    }
+
+    // =========================================================================
+    // 07 — จุดชมวิวและถ่ายรูปคู่ (Scenic Viewpoints & Couple Photo Memories)
+    // =========================================================================
+    case 'SET_COUPLE_POSE': {
+      const poseNames: Record<CouplePoseId, string> = {
+        'sit-moon': 'นั่งเคียงข้างชมจันทร์',
+        'hold-hands': 'จับมือกันใต้แสงจันทร์',
+        'warm-hug': 'กอดกันอุ่นๆ ริมน้ำ',
+        'heart-hands': 'ทำมือรูปหัวใจคู่กัน',
+      };
+      return {
+        ...state,
+        activePose: action.pose,
+        lastEventLog: `เปลี่ยนท่าคู่รักเป็น “${poseNames[action.pose]}”`,
+      };
+    }
+
+    case 'SAVE_PHOTO_MEMORY': {
+      const p1Name = state.players.p1.name || 'ผู้เล่น 1';
+      const p2Name = state.players.p2.name || 'ผู้เล่น 2';
+      const takenAt = action.timestamp ?? new Date().toISOString();
+      const entry = {
+        id: `photo-${state.photoMemories.length + 1}-${takenAt}`,
+        pose: action.pose,
+        backdrop: action.backdrop,
+        layout: action.layout ?? ('polaroid' as const),
+        caption:
+          action.caption.trim() ||
+          `คืนเพ็ญแสนอบอุ่นของ ${p1Name} และ ${p2Name}`,
+        coupleNames: [p1Name, p2Name] as [string, string],
+        takenAt,
+        compositeDataUrl: action.compositeDataUrl ?? null,
+      };
+      return {
+        ...state,
+        activePose: action.pose,
+        photoMemories: [...state.photoMemories.slice(-11), entry],
+        lastEventLog: `บันทึกภาพคู่จาก Photo Booth ใต้แสงจันทร์เรียบร้อยแล้ว!`,
+      };
+    }
+
+    // =========================================================================
+    // 08 — คำอธิษฐานใต้แสงจันทร์ (Synchronized Release, No Score)
+    // =========================================================================
+    case 'TOGGLE_PIER_READY': {
+      const current =
+        action.playerId === 'p1'
+          ? state.pierCeremony.p1Ready
+          : state.pierCeremony.p2Ready;
+      const nextVal = action.ready !== undefined ? action.ready : !current;
+      const nextCeremony: PierCeremonyState = {
+        ...state.pierCeremony,
+        p1Ready: action.playerId === 'p1' ? nextVal : state.pierCeremony.p1Ready,
+        p2Ready: action.playerId === 'p2' ? nextVal : state.pierCeremony.p2Ready,
+      };
+      const actorName = state.players[action.playerId].name;
+      return {
+        ...state,
+        pierCeremony: nextCeremony,
+        lastEventLog:
+          nextCeremony.p1Ready && nextCeremony.p2Ready
+            ? 'ทั้งสองคนพร้อมแล้ว! ค่อยๆ วางกระทงลงสู่สายน้ำแสงจันทร์พร้อมกัน…'
+            : nextVal
+              ? `${actorName} ประคองกระทงพร้อมปล่อยแล้ว รออีกฝ่ายแตะพร้อมกัน`
+              : `${actorName} ยังอยากเขียนคำอธิษฐานเพิ่มอีกนิด`,
       };
     }
 
     case 'RELEASE_KRATHONG': {
-      if (!canReleaseKrathong(state)) {
-        return {
-          ...state,
-          lastEventLog: 'กรุณาประดิษฐ์กระทงให้ผ่านครบทุกด่านก่อนทำพิธีลอยกระทง',
-        };
-      }
-      const p1Name = sanitizePlayerName(state.players.p1.name, 'ฟ้าใส');
-      const p2Name = sanitizePlayerName(state.players.p2.name, 'ต้นกล้า');
+      const p1Name = state.players.p1.name || 'ผู้เล่น 1';
+      const p2Name = state.players.p2.name || 'ผู้เล่น 2';
       const releasedAt = action.timestamp ?? new Date().toISOString();
       const index = state.releasedKrathongs.length;
-      const quality = computeKrathongQuality(state.minigames);
       const newEntry = {
-        id: `krathong-${index + 1}`,
+        id: `krathong-${index + 1}-${releasedAt}`,
         design: {
           ...state.krathongDesign,
           wishText:
             state.krathongDesign.wishText.trim() ||
-            'ขอให้ความรักสว่างไสวดั่งแสงเทียนในคืนเพ็ญ',
+            'ขอให้ความรักของเราสว่างไสวและอบอุ่นเหมือนแสงจันทร์คืนนี้ตลอดไป',
+          decorations: [...state.krathongDesign.decorations],
         },
-        quality,
         coupleNames: [p1Name, p2Name] as [string, string],
         releasedAt,
         x: 940 + (index % 3) * 44,
@@ -726,40 +1026,33 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       };
       return {
         ...state,
+        krathongCrafted: true,
         questStage: 'released',
-        contributedBy: {
-          ...state.contributedBy,
-          [action.byPlayer]: state.contributedBy[action.byPlayer] + 1,
-        },
+        pierCeremony: createInitialPierCeremony(),
         releasedKrathongs: [...state.releasedKrathongs, newEntry],
-        lastEventLog: `กระทงระดับ "${quality.tierTitle}" ของ ${p1Name} และ ${p2Name} ลอยลงสู่สายน้ำแสงจันทร์แล้ว!`,
+        lastEventLog: `กระทงของ ${p1Name} และ ${p2Name} ค่อยๆ ลอยออกไปตามสายน้ำแสงจันทร์แล้ว`,
       };
     }
 
     case 'START_ANOTHER_KRATHONG': {
-      const preservedCoop = { ...state.coopTasks };
-      delete preservedCoop['npc-bua'];
-      delete preservedCoop['gather-lotus'];
-      delete preservedCoop['npc-man'];
       return {
         ...state,
-        inventory: {
-          'banana-leaf': false,
-          'lotus-blossom': false,
-          'candle-incense': false,
-        },
-        minigames: createInitialMinigames(),
         krathongCrafted: false,
-        coopTasks: preservedCoop,
+        pierCeremony: createInitialPierCeremony(),
+        krathongDesign: createDefaultKrathongDesign(),
         questStage: 'explore',
-        lastEventLog: 'เริ่มเก็บรวบรวมวัสดุและเล่นด่านประดิษฐ์สำหรับกระทงใบใหม่กันได้เลย',
+        lastEventLog: 'เริ่มตกแต่งกระทงใบใหม่ด้วยกันได้ตามใจชอบเลย',
       };
     }
 
+    // =========================================================================
+    // ONLINE SYNC
+    // =========================================================================
     case 'APPLY_ONLINE_SNAPSHOT': {
       const myRole = action.myRole;
       const incomingMe = action.players[myRole];
       const curMe = state.players[myRole];
+      const defaults = createDefaultPlayers();
 
       const rawMyPos = action.preserveMyPosition
         ? curMe.position
@@ -775,11 +1068,16 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
           }
         : {
             ...(incomingMe ?? curMe),
+            customization: {
+              ...defaults[myRole].customization,
+              ...(incomingMe?.customization ?? curMe.customization),
+            },
             position: safeMyPos,
           };
 
       const partnerRole: PlayerId = myRole === 'p1' ? 'p2' : 'p1';
-      const incomingPartner = action.players[partnerRole] ?? state.players[partnerRole];
+      const incomingPartner =
+        action.players[partnerRole] ?? state.players[partnerRole];
       const safePartnerPos = isPositionWalkable(
         incomingPartner.position.x,
         incomingPartner.position.y
@@ -789,6 +1087,10 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
 
       const mergedPartner: PlayerProfile = {
         ...incomingPartner,
+        customization: {
+          ...defaults[partnerRole].customization,
+          ...incomingPartner.customization,
+        },
         position: safePartnerPos,
       };
 
@@ -797,24 +1099,49 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
           ? { p1: mergedMe, p2: mergedPartner }
           : { p1: mergedPartner, p2: mergedMe };
 
+      // Preserve my in-progress un-locked fortune answer locally so server masking never erases my typing
+      const incomingFp = action.shared.fortunePaper ?? state.fortunePaper;
+      const mergedFp: FortunePaperState = {
+        ...incomingFp,
+        p1Answer:
+          myRole === 'p1' && !incomingFp.revealed && state.fortunePaper.p1Answer
+            ? state.fortunePaper.p1Answer
+            : incomingFp.p1Answer,
+        p2Answer:
+          myRole === 'p2' && !incomingFp.revealed && state.fortunePaper.p2Answer
+            ? state.fortunePaper.p2Answer
+            : incomingFp.p2Answer,
+      };
+
       return {
         ...state,
+        myRole,
         players: nextPlayers,
         settings: {
           ...state.settings,
           activePlayer: myRole,
         },
         inventory: action.shared.inventory ?? state.inventory,
-        litLanternIds: Array.isArray(action.shared.litLanternIds)
-          ? action.shared.litLanternIds
-          : state.litLanternIds,
-        pavilionBlessed: Boolean(action.shared.pavilionBlessed),
-        contributedBy: action.shared.contributedBy ?? state.contributedBy,
+        lotusBoat: action.shared.lotusBoat ?? state.lotusBoat,
+        leafRelay: action.shared.leafRelay ?? state.leafRelay,
+        fortunePaper: mergedFp,
+        skyLantern: action.shared.skyLantern ?? state.skyLantern,
+        activePose: action.shared.activePose ?? state.activePose,
+        photoMemories: Array.isArray(action.shared.photoMemories)
+          ? action.shared.photoMemories
+          : state.photoMemories,
+        pierCeremony: action.shared.pierCeremony ?? state.pierCeremony,
         questStage: action.shared.questStage ?? state.questStage,
-        minigames: action.shared.minigames ?? state.minigames,
         krathongCrafted: Boolean(action.shared.krathongCrafted),
-        coopTasks: action.shared.coopTasks ?? {},
-        krathongDesign: action.shared.krathongDesign ?? state.krathongDesign,
+        krathongDesign: action.shared.krathongDesign
+          ? {
+              ...state.krathongDesign,
+              ...action.shared.krathongDesign,
+              decorations: Array.isArray(action.shared.krathongDesign.decorations)
+                ? action.shared.krathongDesign.decorations
+                : state.krathongDesign.decorations,
+            }
+          : state.krathongDesign,
         releasedKrathongs: Array.isArray(action.shared.releasedKrathongs)
           ? action.shared.releasedKrathongs
           : state.releasedKrathongs,
@@ -843,9 +1170,16 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
     }
 
     case 'APPLY_PEER_PROFILE': {
+      const defaults = createDefaultPlayers()[action.playerId];
       const nextPlayers: Record<PlayerId, PlayerProfile> = {
         ...state.players,
-        [action.playerId]: action.profile,
+        [action.playerId]: {
+          ...action.profile,
+          customization: {
+            ...defaults.customization,
+            ...action.profile.customization,
+          },
+        },
       };
       return {
         ...state,

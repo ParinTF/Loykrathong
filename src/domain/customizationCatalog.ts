@@ -1,10 +1,13 @@
 import type {
+  AccessoryId,
+  GenderId,
   HairColorId,
   HairStyleId,
   KrathongBaseId,
   KrathongFlowerId,
   KrathongGlowId,
   OutfitId,
+  PlayerCustomization,
   SkinToneId,
 } from './types';
 
@@ -14,6 +17,36 @@ export interface SwatchOption<T extends string> {
   color: string;
   accent?: string;
 }
+
+export const GENDERS: SwatchOption<GenderId>[] = [
+  { id: 'female', label: 'ผู้หญิง', color: '#DB2777', accent: '#FCE7F3' },
+  { id: 'male', label: 'ผู้ชาย', color: '#D97706', accent: '#FEF3C7' },
+  { id: 'nonbinary', label: 'ไม่ระบุ', color: '#059669', accent: '#D1FAE5' },
+];
+
+export const DEFAULT_PRESET_BY_GENDER: Record<
+  GenderId,
+  Pick<PlayerCustomization, 'gender' | 'hairStyle' | 'outfit' | 'accessory'>
+> = {
+  female: {
+    gender: 'female',
+    hairStyle: 'long-silky',
+    outfit: 'silk-lotus',
+    accessory: 'gold-lotus',
+  },
+  male: {
+    gender: 'male',
+    hairStyle: 'short-classic',
+    outfit: 'chut-thai-gold',
+    accessory: 'none',
+  },
+  nonbinary: {
+    gender: 'nonbinary',
+    hairStyle: 'wavy-bob',
+    outfit: 'lanna-cream',
+    accessory: 'jasmine-pin',
+  },
+};
 
 export const SKIN_TONES: SwatchOption<SkinToneId>[] = [
   { id: 'porcelain', label: 'ขาวนวล', color: '#FBE0CF' },
@@ -43,6 +76,12 @@ export const OUTFITS: SwatchOption<OutfitId>[] = [
   { id: 'silk-lotus', label: 'สไบไหมชมพูบัว', color: '#DB2777', accent: '#FCE7F3' },
   { id: 'emerald-sabai', label: 'ชุดไทยเขียวมรกต', color: '#059669', accent: '#D1FAE5' },
   { id: 'lanna-cream', label: 'ผ้าฝ้ายล้านนาครีมแดง', color: '#B91C1C', accent: '#FEF2F2' },
+];
+
+export const ACCESSORIES: SwatchOption<AccessoryId>[] = [
+  { id: 'none', label: 'ไม่สวมเครื่องประดับ', color: '#26334B' },
+  { id: 'gold-lotus', label: 'ปิ่นดอกบัวทอง', color: '#E8B86A' },
+  { id: 'jasmine-pin', label: 'ปิ่นมะลิแสงจันทร์', color: '#F4E9D4' },
 ];
 
 export const KRATHONG_BASES: SwatchOption<KrathongBaseId>[] = [

@@ -1,0 +1,305 @@
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useReducer } from 'react';
+import { describe, expect, it, vi } from 'vitest';
+import { InteractionModal } from '../src/components/InteractionModal';
+import { ScenicPhotoActivity } from '../src/components/activities/ScenicPhotoActivity';
+import { createInitialGameState, gameReducer } from '../src/domain/reducer';
+import type { PhotoBoothEvent } from '../src/domain/types';
+
+function ActivityHarness({
+  spotId,
+  bothOnline = false,
+  lastPhotoEvent = null,
+}: {
+  spotId: string;
+  bothOnline?: boolean;
+  lastPhotoEvent?: PhotoBoothEvent | null;
+}) {
+  const [state, dispatch] = useReducer(gameReducer, undefined, () =>
+    gameReducer(createInitialGameState(), { type: 'ENTER_WORLD' })
+  );
+
+  return (
+    <InteractionModal
+      spotId={spotId}
+      state={state}
+      myOnlineRole="p1"
+      bothOnline={bothOnline}
+      lastPhotoEvent={lastPhotoEvent}
+      reducedMotion={true}
+      onClose={() => {}}
+      onUpdateLotusBoat={(patch) => dispatch({ type: 'UPDATE_LOTUS_BOAT', patch })}
+      onPickBoatLotus={(lotusId, byPlayer) =>
+        dispatch({ type: 'PICK_BOAT_LOTUS', lotusId, byPlayer })
+      }
+      onUpdateLeafRelay={(patch) => dispatch({ type: 'UPDATE_LEAF_RELAY', patch })}
+      onAdvanceLeafCut={(byPlayer) =>
+        dispatch({ type: 'ADVANCE_LEAF_CUT', byPlayer })
+      }
+      onAdvanceLeafFold={(byPlayer) =>
+        dispatch({ type: 'ADVANCE_LEAF_FOLD', byPlayer })
+      }
+      onSetFortunePrompt={(promptIndex) =>
+        dispatch({ type: 'SET_FORTUNE_PROMPT', promptIndex })
+      }
+      onSetFortuneAnswer={(playerId, answer) =>
+        dispatch({ type: 'SET_FORTUNE_ANSWER', playerId, answer })
+      }
+      onLockFortuneAnswer={(playerId) =>
+        dispatch({ type: 'LOCK_FORTUNE_ANSWER', playerId })
+      }
+      onResetFortuneRound={() => dispatch({ type: 'RESET_FORTUNE_ROUND' })}
+      onSetLanternWish={(playerId, wish) =>
+        dispatch({ type: 'SET_LANTERN_WISH', playerId, wish })
+      }
+      onLightLanternSide={(playerId) =>
+        dispatch({ type: 'LIGHT_LANTERN_SIDE', playerId })
+      }
+      onReadyReleaseLantern={(playerId) =>
+        dispatch({ type: 'READY_RELEASE_LANTERN', playerId })
+      }
+      onCompleteLanternRelease={() =>
+        dispatch({ type: 'COMPLETE_LANTERN_RELEASE' })
+      }
+      onUpdateKrathongDesign={(patch) =>
+        dispatch({ type: 'UPDATE_KRATHONG_DESIGN', patch })
+      }
+      onAddKrathongDecoration={(item) =>
+        dispatch({ type: 'ADD_KRATHONG_DECORATION', item })
+      }
+      onMoveKrathongDecoration={(id, x, y) =>
+        dispatch({ type: 'MOVE_KRATHONG_DECORATION', id, x, y })
+      }
+      onRemoveKrathongDecoration={(id) =>
+        dispatch({ type: 'REMOVE_KRATHONG_DECORATION', id })
+      }
+      onClearKrathongDecorations={() =>
+        dispatch({ type: 'CLEAR_KRATHONG_DECORATIONS' })
+      }
+      onCraftKrathong={(byPlayer) =>
+        dispatch({ type: 'CRAFT_KRATHONG', byPlayer })
+      }
+      onSetCouplePose={(pose) => dispatch({ type: 'SET_COUPLE_POSE', pose })}
+      onSavePhotoMemory={(pose, backdrop, caption, layout, compositeDataUrl) =>
+        dispatch({
+          type: 'SAVE_PHOTO_MEMORY',
+          pose,
+          backdrop,
+          caption,
+          layout,
+          compositeDataUrl,
+        })
+      }
+      onTogglePierReady={(playerId, ready) =>
+        dispatch({ type: 'TOGGLE_PIER_READY', playerId, ready })
+      }
+      onReleaseKrathong={(byPlayer) =>
+        dispatch({
+          type: 'RELEASE_KRATHONG',
+          byPlayer,
+          timestamp: '2026-11-24T13:00:00.000Z',
+        })
+      }
+      onStartAnother={() => dispatch({ type: 'START_ANOTHER_KRATHONG' })}
+    />
+  );
+}
+
+describe('Redesigned Romantic Co-op Activities UI (01–08)', () => {
+  it('01 & 02: supports role swapping in boat lotus gathering and real-time cut -> fold leaf relay with zero timers', () => {
+    const { unmount } = render(<ActivityHarness spotId="gather-lotus" />);
+    expect(screen.getByText(/คนพายเรือ:/i)).toBeInTheDocument();
+    expect(screen.getByText(/คนเก็บดอกบัว:/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /สลับหน้าที่กัน/i }));
+    expect(screen.queryByText(/วินาที/)).toBeNull();
+    unmount();
+
+    render(<ActivityHarness spotId="npc-bua" />);
+    // Cutter cuts 3 times -> passes leaf to folder
+    const cutBtn = screen.getByRole('button', { name: /เจียนโคนใบ/i });
+    fireEvent.click(cutBtn);
+    fireEvent.click(screen.getByRole('button', { name: /ตัดแต่งแนวเส้นกลางใบ/i }));
+    fireEvent.click(screen.getByRole('button', { name: /เล็มปลายกลีบ/i }));
+    expect(screen.getByText(/ส่งใบตองที่เจียนแล้วข้ามไปให้/i)).toBeInTheDocument();
+
+    // Switch preview to P2 folder and fold 3 steps
+    fireEvent.click(screen.getByRole('button', { name: /มุมมอง ต้นกล้า/i }));
+    fireEvent.click(screen.getByRole('button', { name: /ลากพับมุมซ้าย/i }));
+    fireEvent.click(screen.getByRole('button', { name: /ลากพับมุมขวา/i }));
+    fireEvent.click(screen.getByRole('button', { name: /กลัดไม้กลัด/i }));
+    expect(screen.getByText(/กลีบหงส์อ่อนช้อย/)).toBeInTheDocument();
+  });
+
+  it('03: hides each partner answer in Blind Fortune Paper until both seal, then reveals simultaneously and gifts candles', () => {
+    render(<ActivityHarness spotId="npc-man" />);
+
+    fireEvent.change(screen.getByLabelText(/คำตอบในใจของคุณ/i), {
+      target: { value: 'ไปดูหิ่งห้อยที่อัมพวา' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /ปิดผนึกคำตอบของฉัน/i }));
+    expect(screen.getByText(/ปิดผนึกคำตอบของคุณไว้เรียบร้อยแล้ว/i)).toBeInTheDocument();
+    expect(screen.queryByText(/ไปดูหิ่งห้อยที่อัมพวา/)).toBeNull();
+
+    // Switch to P2, seal answer -> BOTH reveal simultaneously
+    fireEvent.click(screen.getByRole('button', { name: /ฝั่ง ต้นกล้า/i }));
+    fireEvent.change(screen.getByLabelText(/คำตอบในใจของคุณ/i), {
+      target: { value: 'ไปเที่ยวทะเลด้วยกัน' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /ปิดผนึกคำตอบของฉัน/i }));
+
+    expect(screen.getByText(/ไปดูหิ่งห้อยที่อัมพวา/)).toBeInTheDocument();
+    expect(screen.getByText(/ไปเที่ยวทะเลด้วยกัน/)).toBeInTheDocument();
+    expect(screen.getByText(/ชุดธูปเทียนมงคล/)).toBeInTheDocument();
+  });
+
+  it('04, 06, 07, 08: allows meaningful sky lantern, shared krathong studio with keyboard nudging, online couple photo booth, and score-free keepsake card', async () => {
+    // 04: Single Sky Lantern
+    const r4 = render(<ActivityHarness spotId="lantern-sky" />);
+    fireEvent.change(screen.getByLabelText(/คำอธิษฐานของ ฟ้าใส/i), {
+      target: { value: 'ขอให้จับมือกันตลอดไป' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /ช่วยประคองและจุดไฟโคม/i }));
+    fireEvent.click(screen.getByRole('button', { name: /ฝั่ง ต้นกล้า/i }));
+    fireEvent.click(screen.getByRole('button', { name: /ช่วยประคองและจุดไฟโคม/i }));
+    fireEvent.click(screen.getByRole('button', { name: /นับถอยหลังปล่อยโคมพร้อมกัน/i }));
+    fireEvent.click(screen.getByRole('button', { name: /ฝั่ง ฟ้าใส/i }));
+    fireEvent.click(screen.getByRole('button', { name: /นับถอยหลังปล่อยโคมพร้อมกัน/i }));
+    expect(screen.getByText(/ลอยสว่างขึ้นสู่ท้องฟ้าในฉาก 3 มิติแล้ว/i)).toBeInTheDocument();
+    r4.unmount();
+
+    // 06: Shared Krathong Studio (immediate access, no prerequisites, keyboard nudging)
+    const r6 = render(<ActivityHarness spotId="craft-bench" />);
+    fireEvent.click(screen.getByRole('button', { name: /หัวใจคู่รัก/i }));
+    fireEvent.click(screen.getByRole('button', { name: /\+ วางหัวใจคู่รักลงบนกระทง/i }));
+    const stickerBtn = screen.getByRole('button', { name: /หัวใจคู่รัก วางโดย ฟ้าใส/i });
+    fireEvent.keyDown(stickerBtn, { key: 'ArrowRight' });
+    fireEvent.click(screen.getByRole('button', { name: /บันทึกกระทงใบเดียวในโลกของเรา/i }));
+    expect(screen.getByText(/บันทึกกระทงของเราแล้ว/i)).toBeInTheDocument();
+    r6.unmount();
+
+    // 07: Online Couple Photo Booth (renders live partner stream frame, toggles 4-cut/polaroid, runs 3-2-1 shutter countdown & saves memory)
+    vi.useFakeTimers();
+    try {
+      const r7 = render(
+        <ActivityHarness
+          spotId="pavilion-blessing"
+          lastPhotoEvent={{
+            type: 'photobooth_frame',
+            playerId: 'p2',
+            dataUrl:
+              'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+            mirrored: true,
+            filter: 'warm-candle',
+            ts: Date.now(),
+          }}
+        />
+      );
+      expect(
+        screen.getByRole('button', { name: /เปิดกล้องของฉัน/i })
+      ).toBeInTheDocument();
+      expect(
+        screen.getByAltText(/ภาพกล้องสดของ ต้นกล้า/i)
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: /กอดอุ่น/i }));
+      fireEvent.click(
+        screen.getByRole('button', { name: /นับถอยหลังถ่ายรูปคู่พร้อมกัน/i })
+      );
+      expect(screen.getByText(/ยิ้มและจัดท่าพร้อมกันเลย/i)).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2500);
+      });
+
+      expect(screen.getByText(/อัลบั้มภาพคืนนี้ของเรา \(1 ภาพ\)/i)).toBeInTheDocument();
+      r7.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // 08: Pier Synchronized Release -> Score-Free Keepsake Card
+    render(<ActivityHarness spotId="pier-royal" />);
+    fireEvent.click(screen.getByRole('button', { name: /ประคองฝั่ง ฟ้าใส/i }));
+    fireEvent.click(screen.getByRole('button', { name: /ประคองฝั่ง ต้นกล้า/i }));
+    expect(screen.getByText(/การ์ดที่ระลึกคืนเพ็ญของเราสองคน/i)).toBeInTheDocument();
+    expect(screen.queryByText(/\/300/)).toBeNull();
+    expect(screen.queryByText(/คะแนนรวม/)).toBeNull();
+  });
+
+  it('keeps the live webcam stream active across parent re-renders and stops tracks only on unmount', async () => {
+    const stopSpy = vi.fn();
+    const fakeStream = {
+      getTracks: () => [{ stop: stopSpy }],
+    } as unknown as MediaStream;
+
+    const getUserMediaSpy = vi.fn().mockResolvedValue(fakeStream);
+    const origMediaDevices = navigator.mediaDevices;
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: getUserMediaSpy },
+    });
+
+    const base = createInitialGameState();
+    try {
+      const { rerender, unmount } = render(
+        <ScenicPhotoActivity
+          spotId="pavilion-blessing"
+          activePose="heart-hands"
+          photoMemories={[]}
+          players={base.players}
+          myRole="p1"
+          bothOnline={true}
+          lastPhotoEvent={null}
+          soundEnabled={false}
+          onSetPose={() => {}}
+          onSavePhoto={() => {}}
+          onSendPhotoFrame={() => {}}
+          onSendCamState={() => {}}
+        />
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /เปิดกล้องของฉัน/i }));
+
+      const video = (await waitFor(() =>
+        screen.getByLabelText(/ภาพกล้องสดของ ฟ้าใส/i)
+      )) as HTMLVideoElement;
+      expect(video.srcObject).toBe(fakeStream);
+      expect(video.muted).toBe(true);
+
+      // Re-render with fresh inline callbacks & incoming partner frame (previously killed the camera!)
+      rerender(
+        <ScenicPhotoActivity
+          spotId="pavilion-blessing"
+          activePose="warm-hug"
+          photoMemories={[]}
+          players={base.players}
+          myRole="p1"
+          bothOnline={true}
+          lastPhotoEvent={{
+            type: 'photobooth_frame',
+            playerId: 'p2',
+            dataUrl: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
+            mirrored: true,
+            filter: 'warm-candle',
+            ts: Date.now(),
+          }}
+          soundEnabled={false}
+          onSetPose={() => {}}
+          onSavePhoto={() => {}}
+          onSendPhotoFrame={() => {}}
+          onSendCamState={() => {}}
+        />
+      );
+
+      expect(stopSpy).not.toHaveBeenCalled();
+      expect(screen.getByLabelText(/ภาพกล้องสดของ ฟ้าใส/i)).toBeInTheDocument();
+
+      unmount();
+      expect(stopSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: origMediaDevices,
+      });
+    }
+  });
+});

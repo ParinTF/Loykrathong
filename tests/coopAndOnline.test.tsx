@@ -1,105 +1,20 @@
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { act, fireEvent, render, screen } from '@testing-library/react';
-import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 // @ts-expect-error -- ESM server room hub
 import { createRoomHub } from '../server/roomHub.mjs';
-import { InteractionModal } from '../src/components/InteractionModal';
-import { createInitialGameState, gameReducer } from '../src/domain/reducer';
-import { OnlineRoomClient } from '../src/online/roomClient';
+import { createInitialGameState } from '../src/domain/reducer';
+import { OnlineRoomClient, createSeatKey } from '../src/online/roomClient';
 
-function ModalCoopHarness() {
-  const [state, setState] = useState(() => {
-    const base = createInitialGameState();
-    return gameReducer(base, { type: 'ENTER_WORLD' });
-  });
-
-  return (
-    <InteractionModal
-      spotId="gather-lotus"
-      state={state}
-      playMode="local"
-      reducedMotion={true}
-      onClose={() => {}}
-      onSwitchLocalPlayer={(pid) =>
-        setState((s) => gameReducer(s, { type: 'SET_ACTIVE_PLAYER', playerId: pid }))
-      }
-      onRecordCoopHalf={(taskKey, playerId, halfScore) =>
-        setState((s) =>
-          gameReducer(s, { type: 'RECORD_COOP_HALF', taskKey, playerId, halfScore })
-        )
-      }
-      onCollectMaterial={(material, message) =>
-        setState((s) =>
-          gameReducer(s, {
-            type: 'COLLECT_MATERIAL',
-            material,
-            byPlayer: s.settings.activePlayer,
-            message,
-          })
-        )
-      }
-      onLightLantern={(lanternId) =>
-        setState((s) =>
-          gameReducer(s, { type: 'LIGHT_LANTERN', lanternId, byPlayer: 'p1' })
-        )
-      }
-      onBlessPavilion={() =>
-        setState((s) => gameReducer(s, { type: 'BLESS_PAVILION', byPlayer: 'p1' }))
-      }
-      onCompleteMinigame={() => {}}
-      onResetMinigame={() => {}}
-      onUpdateKrathongDesign={() => {}}
-      onCraftKrathong={() => {}}
-      onReleaseKrathong={() => {}}
-      onStartAnother={() => {}}
-    />
-  );
-}
-
-describe('2-Player Cooperative Challenges & Real-Time Online Room Hub', () => {
-  it('requires BOTH Player 1 and Player 2 to complete the lotus pond challenge before unlocking lotus-blossom', () => {
-    vi.useFakeTimers();
-    try {
-      render(<ModalCoopHarness />);
-
-      // P1 starts and catches 3 blooming lotuses
-      fireEvent.click(screen.getByRole('button', { name: /เริ่มพายเรือเก็บดอกบัว/i }));
-      fireEvent.click(screen.getAllByRole('button', { name: /บัวบาน! เก็บเลย/i })[0]);
-      fireEvent.click(screen.getAllByRole('button', { name: /บัวบาน! เก็บเลย/i })[0]);
-
-      act(() => {
-        vi.advanceTimersByTime(1300);
-      });
-      fireEvent.click(screen.getAllByRole('button', { name: /บัวบาน! เก็บเลย/i })[0]);
-
-      // P1 is done, but P2 hasn't played yet -> reward must NOT be unlocked yet!
-      expect(screen.getByText(/ผ่านส่วนของคุณแล้ว/i)).toBeInTheDocument();
-      expect(screen.queryByText(/ทั้งคู่ช่วยกันคว้า/i)).not.toBeInTheDocument();
-
-      // Switch to P2 and complete P2's 3 blooming lotuses
-      fireEvent.click(screen.getByRole('button', { name: /ต้นกล้า \(P2\)/i }));
-      fireEvent.click(screen.getByRole('button', { name: /เริ่มพายเรือเก็บดอกบัว/i }));
-      fireEvent.click(screen.getAllByRole('button', { name: /บัวบาน! เก็บเลย/i })[0]);
-      fireEvent.click(screen.getAllByRole('button', { name: /บัวบาน! เก็บเลย/i })[0]);
-
-      act(() => {
-        vi.advanceTimersByTime(1300);
-      });
-      fireEvent.click(screen.getAllByRole('button', { name: /บัวบาน! เก็บเลย/i })[0]);
-
-      // Now BOTH P1 and P2 finished -> reward unlocks!
-      expect(screen.getByText(/ทั้งคู่ช่วยกันคว้า/i)).toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('synchronizes two long-distance partners over WebSocket without overwriting concurrent co-op progress', async () => {
-    const server = createServer();
+describe('Real-Time Online Room Hub, Invitations & Blind Fortune Sync', () => {
+  it('supports create_room, GET /api/invitations/:code, join_room, real-time move, and masks Blind Fortune answers until both lock', async () => {
     const hub = createRoomHub();
+    const server = createServer((req, res) => {
+      if (hub.handleInvitation(req, res)) return;
+      res.writeHead(404);
+      res.end();
+    });
     hub.attachToServer(server);
 
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -132,26 +47,33 @@ describe('2-Player Cooperative Challenges & Real-Time Online Room Hub', () => {
         new Promise((res) => p2Ws.once('open', res)),
       ]);
 
+      // 1. P1 creates a private room
       const p1JoinedPromise = waitMessage(p1Ws, (m) => m.type === 'joined_room');
       p1Ws.send(
         JSON.stringify({
-          type: 'join_room',
-          roomCode: 'LOVE99',
-          preferredRole: 'p1',
-          clientId: 'test-client-p1',
+          type: 'create_room',
+          seatKey: createSeatKey(),
           profile: { name: 'มินตรา' },
         })
       );
       const p1Joined = await p1JoinedPromise;
+      const roomCode = String(p1Joined.roomCode);
       expect(p1Joined.role).toBe('p1');
+      expect(roomCode).toMatch(/^[a-f0-9]{24}$/);
 
+      // 2. Partner inspects invitation via HTTP endpoint
+      const invRes = await fetch(`http://127.0.0.1:${port}/api/invitations/${roomCode}`);
+      expect(invRes.status).toBe(200);
+      const invJson = (await invRes.json()) as { hostName: string };
+      expect(invJson.hostName).toBe('มินตรา');
+
+      // 3. P2 joins the private room
       const p2JoinedPromise = waitMessage(p2Ws, (m) => m.type === 'joined_room');
       p2Ws.send(
         JSON.stringify({
           type: 'join_room',
-          roomCode: 'LOVE99',
-          preferredRole: 'p2',
-          clientId: 'test-client-p2',
+          roomCode,
+          seatKey: createSeatKey(),
           profile: { name: 'ภาคิน' },
         })
       );
@@ -159,7 +81,7 @@ describe('2-Player Cooperative Challenges & Real-Time Online Room Hub', () => {
       expect(p2Joined.role).toBe('p2');
       expect(p2Joined.occupancy).toEqual({ p1: true, p2: true });
 
-      // Real-time movement relay from P1 to P2
+      // 4. Real-time movement relay
       const peerMovedPromise = waitMessage(p2Ws, (m) => m.type === 'peer_moved');
       p1Ws.send(
         JSON.stringify({
@@ -171,58 +93,95 @@ describe('2-Player Cooperative Challenges & Real-Time Online Room Hub', () => {
       expect(movedMsg.playerId).toBe('p1');
       expect((movedMsg.position as { y: number }).y).toBe(760);
 
-      // Concurrent co-op task completion from P1 and P2 must merge cleanly into BOTH done!
+      // 5. Blind Fortune Paper: P1 locks answer -> P2 receives p1Locked=true BUT masked p1Answer=''!
+      const p2SecretSnapPromise = waitMessage(
+        p2Ws,
+        (m) =>
+          m.type === 'room_snapshot' &&
+          Boolean((m.shared as { fortunePaper?: { p1Locked: boolean } })?.fortunePaper?.p1Locked)
+      );
       p1Ws.send(
         JSON.stringify({
           type: 'sync_shared',
           shared: {
-            coopTasks: {
-              'gather-lotus': {
-                p1Done: true,
-                p2Done: false,
-                p1Score: 48,
-                p2Score: 0,
-              },
+            fortunePaper: {
+              promptIndex: 0,
+              p1Answer: 'ความลับของมินตรา',
+              p2Answer: '',
+              p1Locked: true,
+              p2Locked: false,
+              revealed: false,
+              completed: false,
             },
           },
         })
       );
-      const mergedSnapshotPromise = waitMessage(
+      const p2SecretSnap = await p2SecretSnapPromise;
+      const maskedFp = (p2SecretSnap.shared as { fortunePaper: Record<string, unknown> })
+        .fortunePaper;
+      expect(maskedFp.p1Locked).toBe(true);
+      expect(maskedFp.p1Answer).toBe('');
+      expect(maskedFp.revealed).toBe(false);
+
+      // 6. P2 locks answer -> BOTH receive revealed=true with BOTH answers intact!
+      const p1RevealPromise = waitMessage(
         p1Ws,
         (m) =>
           m.type === 'room_snapshot' &&
-          Boolean(
-            (
-              m.shared as {
-                coopTasks?: Record<string, { p1Done: boolean; p2Done: boolean }>;
-              }
-            )?.coopTasks?.['gather-lotus']?.p2Done
-          )
+          Boolean((m.shared as { fortunePaper?: { revealed: boolean } })?.fortunePaper?.revealed)
       );
       p2Ws.send(
         JSON.stringify({
           type: 'sync_shared',
           shared: {
-            coopTasks: {
-              'gather-lotus': {
-                p1Done: false,
-                p2Done: true,
-                p1Score: 0,
-                p2Score: 50,
-              },
+            fortunePaper: {
+              promptIndex: 0,
+              p1Answer: '',
+              p2Answer: 'ความลับของภาคิน',
+              p1Locked: true,
+              p2Locked: true,
+              revealed: false,
+              completed: false,
             },
           },
         })
       );
+      const revealedSnap = await p1RevealPromise;
+      const revealedFp = (revealedSnap.shared as { fortunePaper: Record<string, unknown> })
+        .fortunePaper;
+      expect(revealedFp.revealed).toBe(true);
+      expect(revealedFp.p1Answer).toBe('ความลับของมินตรา');
+      expect(revealedFp.p2Answer).toBe('ความลับของภาคิน');
 
-      const merged = await mergedSnapshotPromise;
-      const lotusTask = (
-        merged.shared as {
-          coopTasks: Record<string, { p1Done: boolean; p2Done: boolean }>;
-        }
-      ).coopTasks['gather-lotus'];
-      expect(lotusTask.p1Done).toBe(true);
-      expect(lotusTask.p2Done).toBe(true);
+      // 7. Online Couple Photo Booth: P1 streams live camera frame -> P2 receives it; synchronized shutter broadcasts to BOTH!
+      const p2FramePromise = waitMessage(p2Ws, (m) => m.type === 'photobooth_frame');
+      p1Ws.send(
+        JSON.stringify({
+          type: 'photobooth_frame',
+          dataUrl: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
+          mirrored: true,
+          filter: 'warm-candle',
+        })
+      );
+      const p2Frame = await p2FramePromise;
+      expect(p2Frame.playerId).toBe('p1');
+      expect(p2Frame.filter).toBe('warm-candle');
+
+      const p1ShutterPromise = waitMessage(p1Ws, (m) => m.type === 'photobooth_shutter');
+      const p2ShutterPromise = waitMessage(p2Ws, (m) => m.type === 'photobooth_shutter');
+      p1Ws.send(
+        JSON.stringify({
+          type: 'photobooth_shutter',
+          sessionId: 'pb-test-4cut',
+          layout: 'strip-4',
+          backdrop: 'sala',
+          pose: 'heart-hands',
+          caption: 'คืนเพ็ญข้ามระยะทาง',
+        })
+      );
+      const [s1, s2] = await Promise.all([p1ShutterPromise, p2ShutterPromise]);
+      expect(s1.sessionId).toBe('pb-test-4cut');
+      expect(s2.layout).toBe('strip-4');
     } finally {
       p1Ws.close();
       p2Ws.close();
@@ -230,7 +189,7 @@ describe('2-Player Cooperative Challenges & Real-Time Online Room Hub', () => {
     }
   });
 
-  it('keeps the replacement connection open when the previous socket closes', async () => {
+  it('keeps the replacement connection open when the previous socket closes (anti-flicker stability)', async () => {
     const server = createServer();
     const hub = createRoomHub();
     hub.attachToServer(server);
@@ -256,21 +215,21 @@ describe('2-Player Cooperative Challenges & Real-Time Online Room Hub', () => {
         onPeerMoved: () => {},
         onPeerProfile: () => {},
         onEmote: () => {},
+        onCoopSignal: () => {},
         onStatusChange: (st) => {
           statusHistory.push(st);
         },
       },
-      { wsEndpoint }
+      wsEndpoint
     );
 
     try {
-      client.connect('STABLE1', 'p1');
+      client.connect({ type: 'create_room', seatKey: createSeatKey() });
       await vi.waitFor(() => expect(joinedCount).toBe(1));
-      client.connect('STABLE1', 'p2');
+      client.connect({ type: 'create_room', seatKey: createSeatKey() });
       await vi.waitFor(() => expect(joinedCount).toBe(2));
 
-      // A close from the previous socket used to schedule another connection.
-      await new Promise((resolve) => setTimeout(resolve, 2300));
+      await new Promise((resolve) => setTimeout(resolve, 1600));
 
       expect(joinedCount).toBe(2);
       expect(statusHistory).toEqual([

@@ -14,7 +14,7 @@ describe('Local-only persistence & portrait validation', () => {
     localStorage.clear();
   });
 
-  it('persists, reloads, and resets two profiles without external network calls', async () => {
+  it('persists, reloads, and resets profiles and romantic activity memories without external network calls', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     let state = createInitialGameState();
     state = gameReducer(state, {
@@ -23,9 +23,16 @@ describe('Local-only persistence & portrait validation', () => {
       name: 'มะลิ',
     });
     state = gameReducer(state, {
-      type: 'COLLECT_MATERIAL',
-      material: 'banana-leaf',
-      byPlayer: 'p1',
+      type: 'SET_LANTERN_WISH',
+      playerId: 'p1',
+      wish: 'ขอให้อยู่ข้างกันทุกปี',
+    });
+    state = gameReducer(state, {
+      type: 'SAVE_PHOTO_MEMORY',
+      pose: 'hold-hands',
+      backdrop: 'sala',
+      caption: 'ริมศาลาคืนเพ็ญ',
+      timestamp: '2026-11-24T12:00:00.000Z',
     });
 
     await savePersistedState(state);
@@ -33,7 +40,8 @@ describe('Local-only persistence & portrait validation', () => {
 
     const loaded = await loadPersistedState();
     expect(loaded?.players.p1.name).toBe('มะลิ');
-    expect(loaded?.inventory['banana-leaf']).toBe(true);
+    expect(loaded?.skyLantern.p1Wish).toBe('ขอให้อยู่ข้างกันทุกปี');
+    expect(loaded?.photoMemories).toHaveLength(1);
 
     await clearAllPersistedState();
     const afterReset = await loadPersistedState();
@@ -45,7 +53,9 @@ describe('Local-only persistence & portrait validation', () => {
   it('rejects non-image files and invalid magic headers locally with fallback status', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
-    const textFile = new File(['hello world'], 'notes.txt', { type: 'text/plain' });
+    const textFile = new File(['hello world'], 'notes.txt', {
+      type: 'text/plain',
+    });
     const res1 = await processPortraitFileLocally(textFile);
     expect(res1.portrait.status).toBe('invalid');
     expect(res1.portrait.dataUrl).toBeNull();
@@ -58,9 +68,10 @@ describe('Local-only persistence & portrait validation', () => {
     expect(res2.portrait.status).toBe('invalid');
     expect(res2.portrait.dataUrl).toBeNull();
 
-    // Verify valid PNG magic header detection
     expect(
-      detectImageMimeFromBytes(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]))
+      detectImageMimeFromBytes(
+        new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a])
+      )
     ).toBe('image/png');
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();

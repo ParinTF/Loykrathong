@@ -151,6 +151,36 @@ export function populateScenery(scene: THREE.Scene, assets: FestivalAssets, glow
   add('LanternGate', 258, 152);
   add('Pier', pierX, pierY);
   add('Bridge', 334, 635, 0.96, Math.PI / 2);
+
+  // Romantic wooden riverside bench overlooking the moonlit bridge & water (Spot 07)
+  const benchGroup = new THREE.Group();
+  benchGroup.name = 'RiversideCoupleBench';
+  const teakMat = new THREE.MeshStandardMaterial({ color: 0x6b4423, roughness: 0.78 });
+  const cushionMat = new THREE.MeshStandardMaterial({ color: 0x9f1239, roughness: 0.65 });
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(1.85, 0.12, 0.56), teakMat);
+  seat.position.set(0, 0.48, 0);
+  seat.castShadow = true;
+  seat.receiveShadow = true;
+  const backrest = new THREE.Mesh(new THREE.BoxGeometry(1.85, 0.46, 0.1), teakMat);
+  backrest.position.set(0, 0.76, -0.24);
+  backrest.rotation.x = -0.14;
+  backrest.castShadow = true;
+  const cushion = new THREE.Mesh(new THREE.BoxGeometry(1.66, 0.06, 0.46), cushionMat);
+  cushion.position.set(0, 0.56, 0.02);
+  benchGroup.add(seat, backrest, cushion);
+  for (const lx of [-0.78, 0.78]) {
+    for (const lz of [-0.2, 0.2]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.48, 0.1), teakMat);
+      leg.position.set(lx, 0.24, lz);
+      leg.castShadow = true;
+      benchGroup.add(leg);
+    }
+  }
+  benchGroup.position.set(toWorldX(398), 0.02, toWorldZ(660));
+  benchGroup.rotation.y = -0.24;
+  scene.add(benchGroup);
+  haloAt(toWorldX(398), 1.05, toWorldZ(660), 1.45, 0.26);
+  riverLights.push({ x: toWorldX(398), z: toWorldZ(675), strength: 0.75, warmth: 0.7 });
   contact.push(
     { ...placement(490, 505, 1, 0, 0.032), width: 8.8, length: 6.25 },
     { ...placement(980, 150, 1, 0, 0.032), width: 7.9, length: 4.54 },

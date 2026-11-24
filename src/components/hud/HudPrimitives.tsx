@@ -1,6 +1,9 @@
 import { useEffect, useId, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 
 const paths = {
+  portrait: 'M17 8a5 5 0 1 1-10 0 5 5 0 0 1 10 0zm-14 13v-1a6 6 0 0 1 6-6h6a6 6 0 0 1 6 6v1',
+  upload: 'M4 15v4h16v-4M12 15V4m-4 4 4-4 4 4',
+  share: 'M12 15V3m-4 4 4-4 4 4M7 10H5v11h14V10h-2',
   people: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m20 0v-2a4 4 0 0 0-3-3.9M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0zm3-3.9a4 4 0 0 1 0 7.8',
   sound: 'M3 9h4l5-4v14l-5-4H3zm13-.5a5 5 0 0 1 0 7m2.8-10a9 9 0 0 1 0 13',
   muted: 'M3 9h4l5-4v14l-5-4H3zm13 1 5 5m0-5-5 5',

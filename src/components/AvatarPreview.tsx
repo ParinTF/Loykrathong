@@ -41,6 +41,7 @@ export function AvatarPreview({
   const hair = findOption(HAIR_COLORS, profile.customization.hairColor).color;
   const outfit = findOption(OUTFITS, profile.customization.outfit);
   const hairStyle = profile.customization.hairStyle;
+  const gender = profile.customization.gender ?? (profile.id === 'p2' ? 'male' : 'female');
 
   return (
     <div
@@ -71,11 +72,41 @@ export function AvatarPreview({
         )}
 
         <path d="M12 62 C12 46, 52 46, 52 62 Z" fill={outfit.color} />
-        <path
-          d="M20 48 L44 58 L38 62 L18 55 Z"
-          fill={outfit.accent ?? '#FDE68A'}
-          opacity="0.92"
-        />
+        {gender === 'male' ? (
+          <>
+            <rect
+              x="26"
+              y="45"
+              width="12"
+              height="4.5"
+              rx="2"
+              fill={outfit.accent ?? '#FDE68A'}
+            />
+            <line
+              x1="32"
+              y1="49"
+              x2="32"
+              y2="62"
+              stroke={outfit.accent ?? '#FDE68A'}
+              strokeWidth="2.2"
+            />
+          </>
+        ) : gender === 'nonbinary' ? (
+          <path
+            d="M23 47 L32 56 L41 47"
+            fill="none"
+            stroke={outfit.accent ?? '#FDE68A'}
+            strokeWidth="2.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        ) : (
+          <path
+            d="M20 48 L44 58 L38 62 L18 55 Z"
+            fill={outfit.accent ?? '#FDE68A'}
+            opacity="0.92"
+          />
+        )}
 
         <rect x="28" y="38" width="8" height="8" rx="3" fill={skin} />
         <circle cx="32" cy="28" r="13" fill={skin} />
@@ -99,6 +130,10 @@ export function AvatarPreview({
           strokeWidth="1.6"
           strokeLinecap="round"
         />
+        {profile.customization.accessory && profile.customization.accessory !== 'none' && (
+          <path d="M19 20q-7-4-3-8 3-2 4 4 2-6 5-3 3 4-4 7-1 1-2 0Z"
+            fill={profile.customization.accessory === 'gold-lotus' ? '#E8B86A' : '#FFF1D8'} />
+        )}
       </svg>
     </div>
   );

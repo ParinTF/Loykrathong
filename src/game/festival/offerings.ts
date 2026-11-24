@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { KrathongDesign, KrathongQualityTier } from '../../domain/types';
+import type { KrathongDesign } from '../../domain/types';
 import { type FestivalAssets, type FestivalModel } from './assets';
 
 const BASE_MODELS: Record<KrathongDesign['base'], FestivalModel> = {
@@ -53,25 +53,51 @@ export interface FloatingOffering {
   warmth: number;
 }
 
-export function createOffering(assets: FestivalAssets, design: KrathongDesign, tier: KrathongQualityTier): FloatingOffering {
+export type OfferingStyle = 'ambient' | 'couple';
+
+export function createOffering(
+  assets: FestivalAssets,
+  design: KrathongDesign,
+  style: OfferingStyle = 'couple'
+): FloatingOffering {
   const placement = { x: 0, y: 0, z: 0 };
   const group = new THREE.Group();
   group.name = 'Wax and banana-leaf offering';
   group.add(
     assets.create(BASE_MODELS[design.base], placement, false),
-    assets.create(FLOWER_MODELS[design.flower], placement, false),
+    assets.create(FLOWER_MODELS[design.flower], placement, false)
   );
-  if (tier !== 'classic') {
-    group.add(assets.create(FLOWER_MODELS[design.flower], { ...placement, y: -0.109, scale: 1.27, yaw: 0.48 }, false));
+  if (style === 'couple') {
+    group.add(
+      assets.create(
+        FLOWER_MODELS[design.flower],
+        { ...placement, y: -0.109, scale: 1.27, yaw: 0.48 },
+        false
+      )
+    );
   }
-  const scale = tier === 'celestial' ? 1.36 : tier === 'radiant' ? 1.19 : 1;
+  const hasRichDecor = (design.decorations?.length ?? 0) >= 4;
+  const scale = style === 'couple' ? (hasRichDecor ? 1.28 : 1.18) : 1;
   group.scale.setScalar(scale);
-  const flame = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: flameTexture(), color: FLAME_TONES[design.glow], transparent: true, depthWrite: false, toneMapped: false,
-  }));
+
+  const flame = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: flameTexture(),
+      color: FLAME_TONES[design.glow],
+      transparent: true,
+      depthWrite: false,
+      toneMapped: false,
+    })
+  );
   flame.position.set(0.046, 0.803, 0.103);
   flame.scale.set(0.28, 0.47, 1);
   group.add(flame);
-  const warmth = design.glow === 'moonlight-pearl' ? -1 : design.glow === 'rose-spark' ? 0.08 : 0.92;
+
+  const warmth =
+    design.glow === 'moonlight-pearl'
+      ? -1
+      : design.glow === 'rose-spark'
+        ? 0.08
+        : 0.92;
   return { group, flame, warmth };
 }

@@ -38,22 +38,10 @@ export const SOLID_OBSTACLES: Rect[] = [
 
 export const WORLD_SPOTS: WorldSpot[] = [
   {
-    id: 'npc-bua',
-    kind: 'npc',
-    title: 'ซุ้มใบตองป้าบัว',
-    subtitle: 'รับใบตองสดและหยวกกล้วยสำหรับพับกลีบกระทง',
-    zoneName: 'ตลาดริมคลอง',
-    npcName: 'ป้าบัว',
-    x: 980,
-    y: 222,
-    radius: 76,
-    grantsMaterial: 'banana-leaf',
-  },
-  {
     id: 'gather-lotus',
     kind: 'gather',
-    title: 'แปลงบัวริมตลิ่ง',
-    subtitle: 'เก็บดอกบัวชมพูและกลีบดอกไม้คู่รัก',
+    title: '01 · พายเรือเก็บดอกบัวด้วยกัน',
+    subtitle: 'คนหนึ่งพายเรือ อีกคนเก็บบัวชมพูท่ามกลางแสงหิ่งห้อย สลับหน้าที่กันได้ตามสบาย',
     zoneName: 'สวนหิ่งห้อย',
     x: 242,
     y: 516,
@@ -61,76 +49,78 @@ export const WORLD_SPOTS: WorldSpot[] = [
     grantsMaterial: 'lotus-blossom',
   },
   {
+    id: 'npc-bua',
+    kind: 'npc',
+    title: '02 · ซุ้มช่วยกันพับใบตองป้าบัว',
+    subtitle: 'คนหนึ่งเจียนใบตองตามทรง อีกคนรับมาพับกลีบต่อแบบเรียลไทม์',
+    zoneName: 'ตลาดริมคลอง',
+    npcName: 'ป้าบัว',
+    x: 980,
+    y: 222,
+    radius: 78,
+    grantsMaterial: 'banana-leaf',
+  },
+  {
     id: 'npc-man',
     kind: 'npc',
-    title: 'ซุ้มเครื่องหอมลุงมั่น',
-    subtitle: 'รับธูป เทียนหอม และสายสิญจน์มงคล',
+    title: '03 · กระดาษคำทำนายของเราสองคน',
+    subtitle: 'แอบเขียนคำตอบของแต่ละคนแล้วเปิดเผยพร้อมกัน ลุงมั่นมอบชุดธูปเทียนให้เป็นของขวัญ',
     zoneName: 'ตลาดริมคลอง',
     npcName: 'ลุงมั่น',
     x: 1232,
     y: 256,
-    radius: 76,
+    radius: 78,
     grantsMaterial: 'candle-incense',
   },
   {
-    id: 'lantern-1',
+    id: 'lantern-sky',
     kind: 'lantern',
-    title: 'ซุ้มโคมยี่เป็งฝั่งเหนือ',
-    subtitle: 'จุดโคมอธิษฐานดวงที่ 1 ใต้ซุ้มไผ่',
+    title: '04 · ส่งความปรารถนาขึ้นสู่ท้องฟ้า',
+    subtitle: 'เขียนคำอธิษฐานของสองเราลงบนโคมยี่เป็งดวงพิเศษ ประคองไฟแล้วนับถอยหลังปล่อยพร้อมกัน',
     zoneName: 'ลานโคมยี่เป็ง',
-    x: 258,
-    y: 218,
-    radius: 74,
-  },
-  {
-    id: 'lantern-2',
-    kind: 'lantern',
-    title: 'โคมคู่กลางลาน',
-    subtitle: 'จุดโคมอธิษฐานดวงที่ 2 เคียงข้างกัน',
-    zoneName: 'ลานโคมยี่เป็ง',
-    x: 492,
-    y: 186,
-    radius: 74,
-  },
-  {
-    id: 'lantern-3',
-    kind: 'lantern',
-    title: 'โคมริมทางเดินทอง',
-    subtitle: 'จุดโคมอธิษฐานดวงที่ 3 ส่องทางสู่ท่าน้ำ',
-    zoneName: 'ลานโคมยี่เป็ง',
-    x: 682,
-    y: 244,
-    radius: 74,
-  },
-  {
-    id: 'pavilion-blessing',
-    kind: 'pavilion',
-    title: 'ศาลาคู่รักแสงจันทร์',
-    subtitle: 'พักชมหิ่งห้อยและบรรเลงระฆังแสงจันทร์รับคำอวยพรคู่กัน',
-    zoneName: 'สวนหิ่งห้อย',
-    x: 490,
-    y: 514,
-    radius: 80,
+    x: 410,
+    y: 214,
+    radius: 86,
   },
   {
     id: 'craft-bench',
     kind: 'craft',
-    title: 'โต๊ะประดิษฐ์กระทงคู่',
-    subtitle: 'ประกอบกระทงจากวัสดุทั้ง 3 อย่างและเขียนคำอธิษฐาน',
+    title: '06 · สร้างกระทงที่มีเพียงใบเดียวในโลก',
+    subtitle: 'ช่วยกันลากวางดอกไม้ เลือกสี จัดเทียน และตกแต่งกระทงเห็นกันสดๆ แบบเรียลไทม์',
     zoneName: 'ลานกลางงาน',
     x: 760,
     y: 472,
+    radius: 80,
+  },
+  {
+    id: 'pavilion-blessing',
+    kind: 'pavilion',
+    title: '07 · ศาลาคู่รักชมจันทร์ & ถ่ายรูปคู่',
+    subtitle: 'เปิดกล้องถ่ายรูปคู่ Online Photo Booth แม้อยู่คนละที่ ทั้งแบบโพลารอยด์ 1 ภาพและ 4 ช็อต',
+    zoneName: 'สวนหิ่งห้อย',
+    x: 490,
+    y: 514,
+    radius: 82,
+  },
+  {
+    id: 'scenic-bench',
+    kind: 'photo',
+    title: '07 · ม้านั่งริมน้ำ & Photo Booth คู่รัก',
+    subtitle: 'เปิดกล้องถ่ายรูปคู่ข้ามระยะทางริมสะพานไม้ชมจันทร์ พร้อมกรอบลอยกระทงและฟิลเตอร์แสงอุ่น',
+    zoneName: 'ริมแม่น้ำฝั่งตะวันตก',
+    x: 372,
+    y: 656,
     radius: 78,
   },
   {
     id: 'pier-royal',
     kind: 'pier',
-    title: 'ท่าน้ำแสงจันทร์',
-    subtitle: 'ทำพิธีขอขมาพระแม่คงคาและปล่อยกระทงลงสู่สายน้ำ',
+    title: '08 · ท่าน้ำคำอธิษฐานใต้แสงจันทร์',
+    subtitle: 'เขียนคำอธิษฐานร่วมกัน กดปล่อยกระทงพร้อมกัน แล้วรับชมฉากกระทงลอยสู่สายน้ำ',
     zoneName: 'ริมแม่น้ำ',
     x: 940,
     y: 782,
-    radius: 86,
+    radius: 90,
   },
 ];
 
@@ -177,9 +167,6 @@ export function isPositionWalkable(
     return false;
   }
 
-  // Deep water guard outside the wooden pier.
-  // Do NOT enforce a top-edge y>=pier.y barrier here, otherwise small continuous
-  // joystick steps (e.g. 3.2px/frame) hit a 4px dead-zone at the bank-to-pier threshold!
   if (y + radius > RIVER_BANK_Y) {
     const insidePierSpan =
       x - radius >= PIER_WALKABLE_RECT.x &&
@@ -217,9 +204,7 @@ export function resolveMovement(
     return { x: targetX, y: targetY, moved: true };
   }
 
-  // Smooth pier entrance funneling: when dragging a joystick downward near the
-  // pier approach, gently guide the character inward between the wooden railings
-  // instead of catching on the left/right riverbank corner.
+  // Smooth pier entrance funneling so joystick never snags on pier corners
   if (
     dy > 0 &&
     fromY + radius >= RIVER_BANK_Y - 12 &&
@@ -243,7 +228,6 @@ export function resolveMovement(
     }
   }
 
-  // Axis slide so character moves smoothly along obstacles or river bank
   if (dx !== 0 && isPositionWalkable(targetX, fromY, radius)) {
     return { x: targetX, y: fromY, moved: true };
   }

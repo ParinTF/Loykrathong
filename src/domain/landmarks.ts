@@ -74,6 +74,8 @@ export function getLandmarkForSpotKind(kind: SpotKind): LandmarkAsset {
   switch (kind) {
     case 'pavilion':
       return LANDMARK_ASSETS.sala;
+    case 'photo':
+      return LANDMARK_ASSETS.river;
     case 'npc':
       return LANDMARK_ASSETS.market;
     case 'lantern':

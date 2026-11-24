@@ -30,6 +30,7 @@ const hub = createRoomHub();
 
 const server = createServer(async (req, res) => {
   try {
+    if (hub.handleInvitation(req, res)) return;
     const reqUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
 
     if (reqUrl.pathname === '/healthz') {
